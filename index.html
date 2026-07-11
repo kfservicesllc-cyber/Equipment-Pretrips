@@ -1,0 +1,3021 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+<title>The Kingdom — Shanty Creek Resorts</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Inter:wght@400;500;600;700&family=Roboto+Mono:wght@500;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<style>
+  :root{
+    --navy:#12233f;
+    --navy-2:#1c3358;
+    --gold:#c9a227;
+    --gold-light:#e6c65c;
+    --cream:#f7f4ec;
+    --paper:#ffffff;
+    --ink:#1a1e27;
+    --ink-soft:#5b6472;
+    --line:#dfd9c7;
+    --ok:#3d7a5c;
+    --warn:#b8791a;
+    --bad:#a3372c;
+    --radius:10px;
+    --shadow: 0 1px 2px rgba(18,35,63,.06), 0 6px 20px rgba(18,35,63,.08);
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--cream);
+    color:var(--ink);
+    font-family:'Inter',system-ui,sans-serif;
+    -webkit-tap-highlight-color:transparent;
+    overflow-x:hidden;
+  }
+  .table-scroll{overflow-x:auto; -webkit-overflow-scrolling:touch; margin:0 -4px; padding:0 4px;}
+  .table-scroll table{min-width:100%;}
+  h1,h2,h3,.display{font-family:'Barlow Condensed',system-ui,sans-serif; text-transform:uppercase; letter-spacing:.03em;}
+  .mono{font-family:'Roboto Mono',monospace;}
+  a{color:inherit;}
+  button{font-family:inherit; cursor:pointer;}
+
+  /* Top bar */
+  .topbar{
+    background:var(--navy);
+    color:var(--cream);
+    padding:14px 18px;
+    display:flex; align-items:center; justify-content:space-between;
+    position:sticky; top:0; z-index:20;
+    box-shadow:var(--shadow);
+  }
+  .brand{display:flex; align-items:center; gap:10px;}
+  .brand .peak{width:26px;height:26px;flex:none;}
+  .brand-text{line-height:1.05;}
+  .brand-text .t1{font-family:'Barlow Condensed'; font-weight:700; font-size:19px; letter-spacing:.04em;}
+  .brand-text .t2{font-size:10.5px; color:var(--gold-light); letter-spacing:.14em; text-transform:uppercase;}
+  .mode-toggle{display:flex; background:rgba(255,255,255,.08); border-radius:999px; padding:3px; gap:2px;}
+  .mode-toggle button{
+    border:none; background:transparent; color:var(--cream); opacity:.65;
+    padding:8px 16px; border-radius:999px; font-size:13px; font-weight:600; letter-spacing:.03em;
+  }
+  .mode-toggle button.active{background:var(--gold); color:var(--navy); opacity:1;}
+
+  .wrap{max-width:1080px; margin:0 auto; padding:22px 16px 60px;}
+  .wrap.narrow{max-width:520px;}
+
+  /* Cards */
+  .card{background:var(--paper); border:1px solid var(--line); border-radius:var(--radius); box-shadow:var(--shadow); padding:20px;}
+  .card + .card{margin-top:16px;}
+  .section-label{font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-soft); font-weight:600; margin-bottom:10px;}
+
+  /* Driver: bus picker tiles */
+  .tile-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:10px;}
+  .tile{
+    border:1.5px solid var(--line); background:var(--paper); border-radius:var(--radius);
+    padding:16px 12px; text-align:left; transition:border-color .15s, transform .1s;
+  }
+  .tile:active{transform:scale(.98);}
+  .tile:hover{border-color:var(--gold);}
+  .tile .bus-id{font-family:'Barlow Condensed'; font-size:26px; font-weight:700; color:var(--navy);}
+  .tile .bus-name{font-size:12.5px; color:var(--ink-soft); margin-top:2px;}
+  .tile .bus-mi{font-size:11px; color:var(--ink-soft); margin-top:8px; font-family:'Roboto Mono';}
+
+  .action-choice{display:grid; grid-template-columns:1fr 1fr; gap:12px;}
+  .action-btn{
+    border:2px solid var(--navy); border-radius:var(--radius); padding:22px 14px; background:var(--paper);
+    font-family:'Barlow Condensed'; font-size:22px; font-weight:700; color:var(--navy); text-align:center;
+  }
+  .action-btn.start{border-color:var(--ok); color:var(--ok);}
+  .action-btn.end{border-color:var(--bad); color:var(--bad);}
+  .action-btn:active{transform:scale(.98);}
+
+  .ticket-head{
+    display:flex; align-items:baseline; justify-content:space-between; border-bottom:2px dashed var(--line);
+    padding-bottom:12px; margin-bottom:16px;
+  }
+  .ticket-head .bus-big{font-family:'Barlow Condensed'; font-size:34px; font-weight:700; color:var(--navy); line-height:1;}
+  .ticket-head .sub{font-size:12px; color:var(--ink-soft); margin-top:2px;}
+  .badge{
+    font-size:12px; font-weight:700; padding:5px 12px; border-radius:999px; letter-spacing:.04em; text-transform:uppercase;
+  }
+  .badge.start{background:#e4f2ea; color:var(--ok);}
+  .badge.end{background:#f6e6e3; color:var(--bad);}
+
+  label{display:block; font-size:12.5px; font-weight:600; color:var(--ink-soft); margin-bottom:5px; letter-spacing:.02em;}
+  input[type=text], input[type=number], textarea, select{
+    width:100%; border:1.5px solid var(--line); border-radius:8px; padding:12px 12px; font-size:16px;
+    font-family:inherit; background:var(--paper); color:var(--ink);
+  }
+  input:focus, textarea:focus, select:focus{outline:2px solid var(--gold); outline-offset:1px; border-color:var(--gold);}
+  .field{margin-bottom:14px;}
+  .odo-input{font-family:'Roboto Mono'; font-size:22px; font-weight:700; letter-spacing:.02em;}
+
+  .check-row{
+    padding:12px 4px; border-bottom:1px solid var(--line);
+  }
+  .check-row:last-child{border-bottom:none;}
+  .check-row-top{display:flex; align-items:center; justify-content:space-between; gap:10px;}
+  .check-row .lbl{font-size:14.5px; font-weight:600;}
+  .pf-pair{display:flex; gap:6px; flex:none;}
+  .pf-btn{border:1.5px solid var(--line); background:var(--paper); border-radius:6px; padding:7px 14px; font-size:12.5px; font-weight:700; color:var(--ink-soft); text-transform:uppercase; letter-spacing:.03em;}
+  .pf-btn.pass.on{background:#e4f2ea; border-color:var(--ok); color:var(--ok);}
+  .pf-btn.fail.on{background:#fbe3e0; border-color:var(--bad); color:var(--bad);}
+  .check-fail-note{margin-top:8px;}
+  .check-fail-note textarea{border-color:var(--bad);}
+
+  .issue-row{border:1.5px solid var(--line); border-radius:8px; padding:12px; margin-bottom:10px;}
+  .issue-row-top{display:flex; gap:8px; align-items:center; margin-bottom:8px;}
+  .sev-pill{display:flex; gap:6px;}
+  .sev-btn{border:1.5px solid var(--line); background:var(--paper); border-radius:6px; padding:6px 10px; font-size:12px; font-weight:600; color:var(--ink-soft);}
+  .sev-btn.sel-minor.on{background:#fff3d6; border-color:var(--warn); color:var(--warn);}
+  .sev-btn.sel-urgent.on{background:#fbe3e0; border-color:var(--bad); color:var(--bad);}
+  .remove-issue{margin-left:auto; border:none; background:none; color:var(--ink-soft); font-size:12px; text-decoration:underline;}
+
+  .btn{
+    display:inline-flex; align-items:center; justify-content:center; gap:8px;
+    border:none; border-radius:8px; padding:13px 20px; font-weight:700; font-size:14.5px; letter-spacing:.02em;
+    text-transform:uppercase;
+  }
+  .btn-primary{background:var(--navy); color:var(--cream); width:100%;}
+  .btn-primary:active{background:var(--navy-2);}
+  .btn-gold{background:var(--gold); color:var(--navy); width:100%;}
+  .btn-outline{background:transparent; border:1.5px solid var(--line); color:var(--ink); text-transform:none; font-weight:600;}
+  .btn-add-issue{width:100%; border:1.5px dashed var(--line); background:transparent; color:var(--ink-soft); padding:12px; border-radius:8px; font-weight:600; font-size:13.5px;}
+  .btn-sm{padding:7px 12px; font-size:12px; text-transform:none; border-radius:6px;}
+  .btn-link{background:none; border:none; color:var(--navy); font-size:13px; font-weight:600; text-decoration:underline; padding:6px 0;}
+
+  .confirm-wrap{text-align:center; padding:40px 16px;}
+  .confirm-check{width:64px; height:64px; border-radius:50%; background:var(--ok); color:#fff; display:flex; align-items:center; justify-content:center; margin:0 auto 16px; font-size:32px;}
+  .confirm-wrap h2{margin:0 0 6px; font-size:26px;}
+  .confirm-id{color:var(--ink-soft); font-size:13px; margin-bottom:24px;}
+
+  /* Admin */
+  .stat-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:16px;}
+  .stat{background:var(--paper); border:1px solid var(--line); border-radius:var(--radius); padding:16px; box-shadow:var(--shadow);}
+  .stat .num{font-family:'Barlow Condensed'; font-size:32px; font-weight:700; color:var(--navy);}
+  .stat .lab{font-size:11.5px; color:var(--ink-soft); text-transform:uppercase; letter-spacing:.06em;}
+  .stat.alert .num{color:var(--bad);}
+
+  table{width:100%; border-collapse:collapse; font-size:13.5px;}
+  th{text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--ink-soft); border-bottom:2px solid var(--line); padding:8px 10px; white-space:nowrap;}
+  td{padding:9px 10px; border-bottom:1px solid var(--line); vertical-align:top;}
+  tr:last-child td{border-bottom:none;}
+  .tag{display:inline-block; padding:3px 9px; border-radius:999px; font-size:11px; font-weight:700; text-transform:uppercase;}
+  .tag.open{background:#fbe3e0; color:var(--bad);}
+  .tag.resolved{background:#e4f2ea; color:var(--ok);}
+  .tag.minor{background:#fff3d6; color:var(--warn);}
+
+  .bus-card{display:flex; gap:16px; flex-wrap:wrap; align-items:flex-start; padding:16px; border:1px solid var(--line); border-radius:var(--radius); margin-bottom:12px; background:var(--paper);}
+  .bus-card .info{flex:1; min-width:180px;}
+  .bus-card .qrs{display:flex; gap:14px; flex-wrap:wrap;}
+  .qr-box{text-align:center; font-size:11px; color:var(--ink-soft);}
+  .qr-box img{border:1px solid var(--line); border-radius:6px; display:block; margin-bottom:5px;}
+
+  .toolbar{display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:14px;}
+  .toolbar select, .toolbar input{width:auto;}
+
+  /* Pinned add/sort controls: stays visible at the top of the screen while its list scrolls
+     underneath. positionPinned() (JS) sets the actual "top" px value for each .pin-top element,
+     stacking multiple pinned bars in the same tab one below the other. */
+  .pin-top{position:sticky; z-index:12;}
+  .card.pin-top{background:var(--paper);}
+  .toolbar.pin-top{background:var(--cream); padding:10px 2px 14px; margin-bottom:0;}
+  .empty{color:var(--ink-soft); font-size:13.5px; text-align:center; padding:30px 10px;}
+  .tabs2{display:flex; gap:4px; border-bottom:2px solid var(--line); margin-bottom:16px; overflow-x:auto; -webkit-overflow-scrolling:touch; scrollbar-width:thin; position:sticky; z-index:15; background:var(--cream); padding-top:8px;}
+  .tabs2 button{white-space:nowrap; flex:none;}
+  .tabs2 button{background:none; border:none; padding:10px 4px; margin-right:18px; font-weight:600; font-size:13.5px; color:var(--ink-soft); border-bottom:2px solid transparent; margin-bottom:-2px;}
+  .tabs2 button.active{color:var(--navy); border-bottom-color:var(--gold);}
+  .note{font-size:12px; color:var(--ink-soft); line-height:1.5;}
+  .fail-banner{background:#fbe3e0; border:1.5px solid var(--bad); color:var(--bad); border-radius:8px; padding:12px 14px; font-size:13.5px; margin-bottom:14px; font-weight:600;}
+  .settings-row{max-width:420px;}
+  .flex-between{display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;}
+  @media (max-width:560px){
+    .action-choice{grid-template-columns:1fr;}
+    .stat-grid{grid-template-columns:1fr 1fr;}
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">
+    <svg class="peak" viewBox="0 0 24 24" fill="none"><path d="M2 19L9 7l3.5 6L15 9l7 10H2z" fill="#c9a227"/></svg>
+    <div class="brand-text">
+      <div class="t1">The Kingdom</div>
+      <div class="t2">Shanty Creek Equipment Logging and PM Tracking</div>
+    </div>
+  </div>
+  <div class="mode-toggle" id="modeToggle">
+    <button data-mode="driver" class="active">Equipment</button>
+    <button data-mode="admin">Admin</button>
+  </div>
+</div>
+
+<div id="app"></div>
+
+<script>
+(function(){
+
+/* ---------- Supabase config ---------- */
+const SUPABASE_URL = 'https://kyiqildemlstsrrzkcpy.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt5aXFpbGRlbWxzdHNycnprY3B5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI5MTU2MzIsImV4cCI6MjA5ODQ5MTYzMn0.dS9rTqSRghdwIYRQ2JDAxqJGsSucTXv2ldXTV472uw8';
+
+const supa = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+
+/* ---------- auth / profile helpers ---------- */
+// Replaces the old client-side password check entirely. Signing in now goes through real
+// Supabase Auth, and which department (or full-admin) an account can see is looked up from
+// the `profiles` table, which the database itself enforces via RLS — not this file.
+async function fetchMyProfile(userId){
+  try{
+    const { data, error } = await supa.from('profiles').select('*').eq('id', userId).maybeSingle();
+    if(error || !data) return null;
+    return data;
+  }catch(e){
+    console.error('profile fetch failed', e);
+    return null;
+  }
+}
+function applyProfile(profile){
+  state.siteUnlocked = true;
+  state.currentDepartmentKey = profile.is_full_admin ? null : profile.department_key;
+  state.currentDepartmentName = profile.department_name || '';
+  state.mode = 'admin';
+}
+async function tryRestoreSession(){
+  if(!supa) return;
+  try{
+    const { data } = await supa.auth.getSession();
+    const session = data && data.session;
+    if(!session) return;
+    const profile = await fetchMyProfile(session.user.id);
+    if(profile) applyProfile(profile);
+  }catch(e){
+    console.error('session restore failed', e);
+  }
+}
+
+/* ---------- storage helpers (Supabase-backed key/value store) ---------- */
+let lastStorageError = null;
+async function getJSON(key, fallback){
+  if(!supa) return fallback;
+  try{
+    const { data, error } = await supa.from('kv_store').select('value').eq('key', key).maybeSingle();
+    if(error || !data) return fallback;
+    return data.value;
+  }catch(e){
+    console.error('storage get failed', key, e);
+    return fallback;
+  }
+}
+async function setJSON(key, val){
+  if(!supa){ lastStorageError = 'Supabase library did not load.'; return false; }
+  for(let attempt=0; attempt<2; attempt++){
+    try{
+      const { error } = await supa.from('kv_store').upsert({ key, value: val, updated_at: new Date().toISOString() });
+      if(!error){ lastStorageError = null; return true; }
+      lastStorageError = error.message || error.code || JSON.stringify(error);
+      console.error('storage set failed', key, error);
+    }catch(e){
+      lastStorageError = (e && e.message) || String(e);
+      console.error('storage set failed', key, e);
+    }
+  }
+  return false;
+}
+function uid(prefix){
+  return prefix + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2,6);
+}
+function fmtDT(iso){
+  const d = new Date(iso);
+  return d.toLocaleDateString(undefined,{month:'short',day:'numeric'}) + ' · ' + d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'});
+}
+function qrUrl(dataStr, size){
+  return 'https://api.qrserver.com/v1/create-qr-code/?size=' + (size||'170x170') + '&data=' + encodeURIComponent(dataStr);
+}
+function selfUrlFor(busId){
+  const base = window.location.href.split('#')[0];
+  return base + '#bus=' + encodeURIComponent(busId);
+}
+function buildFailureEmailBody(bus, driver, mileage, timestamp, failedChecks){
+  const cat = categoryFor(bus);
+  let body = 'Pre-trip check failure\n\n';
+  body += 'Equipment: ' + bus.id + (bus.name ? ' (' + bus.name + ')' : '') + ' — ' + cat.label + '\n';
+  body += 'Driver: ' + driver + '\n';
+  if(cat.trackingUnit !== 'none' && mileage != null){
+    body += (cat.trackingUnit==='hours' ? 'Hour meter: ' : 'Odometer: ') + mileage + ' ' + unitLabel(cat.trackingUnit) + '\n';
+  }
+  body += 'Time: ' + fmtDT(timestamp) + '\n\n';
+  body += 'Failed checks:\n';
+  failedChecks.forEach(c => {
+    body += '- ' + c.label + (c.note ? ': ' + c.note : ' (no note provided)') + '\n';
+  });
+  return body;
+}
+async function sendAppEmail(subject, body, recipients){
+  if(!recipients || !recipients.length){
+    return { ok:false, method:'unconfigured', error:'Set at least one notify email in Admin → Settings, or on this equipment\'s type.' };
+  }
+  try{
+    const res = await fetch(SUPABASE_URL + '/functions/v1/hyper-worker', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + SUPABASE_ANON_KEY
+      },
+      body: JSON.stringify({ to: recipients, subject, message: body })
+    });
+    const data = await res.json().catch(()=>({}));
+    if(!res.ok){
+      return { ok:false, method:'send_error', error: (data && data.error) || ('HTTP ' + res.status) };
+    }
+    return { ok:true, method:'auto' };
+  }catch(e){
+    console.error('Edge function send failed', e);
+    return { ok:false, method:'send_error', error: (e && e.message) || 'Unknown error' };
+  }
+}
+// A category's own notify email overrides the global default when set; otherwise falls back
+// to Admin → Settings. Lets a department (e.g. Building Maintenance) route its own alerts
+// to its own inbox without touching everyone else's.
+function recipientsForFailure(cat){
+  const raw = (cat && cat.notifyEmail && cat.notifyEmail.trim()) ? cat.notifyEmail : (state.settings.notifyEmail || '');
+  return raw.split(',').map(e=>e.trim()).filter(Boolean);
+}
+// PM (maintenance-due) recipients: category PM address → global PM address → falls back to
+// whatever failure-alert address would apply, so PM emails never go silent just because no
+// PM-specific address has been set up yet.
+function recipientsForPm(cat){
+  const catPm = (cat && cat.pmNotifyEmail && cat.pmNotifyEmail.trim()) ? cat.pmNotifyEmail : '';
+  if(catPm) return catPm.split(',').map(e=>e.trim()).filter(Boolean);
+  const globalPm = (state.settings.pmNotifyEmail || '').trim();
+  if(globalPm) return globalPm.split(',').map(e=>e.trim()).filter(Boolean);
+  return recipientsForFailure(cat);
+}
+async function sendFailureNotification(bus, driver, mileage, timestamp, failedChecks){
+  const cat = categoryFor(bus);
+  const subject = 'Pre-trip check failure — ' + bus.id + ' (' + cat.label + ') — ' + driver;
+  const body = buildFailureEmailBody(bus, driver, mileage, timestamp, failedChecks);
+  return await sendAppEmail(subject, body, recipientsForFailure(cat));
+}
+function pmDueItemsFor(bus, mileage){
+  if(mileage == null || !bus.pmItems || !bus.pmItems.length) return [];
+  return bus.pmItems.filter(p => mileage >= (p.lastDoneReading||0) + Number(p.intervalValue||0));
+}
+function buildPmEmailBody(bus, driver, mileage, timestamp, dueItems){
+  const cat = categoryFor(bus);
+  const unit = unitLabel(cat.trackingUnit);
+  let body = 'Preventive maintenance due\n\n';
+  body += 'Equipment: ' + bus.id + (bus.name ? ' (' + bus.name + ')' : '') + ' — ' + cat.label + '\n';
+  body += 'Driver: ' + driver + '\n';
+  body += (cat.trackingUnit==='hours' ? 'Hour meter: ' : 'Odometer: ') + mileage + ' ' + unit + '\n';
+  body += 'Time: ' + fmtDT(timestamp) + '\n\n';
+  body += 'Due items:\n';
+  dueItems.forEach(p => {
+    const dueAt = (p.lastDoneReading||0) + Number(p.intervalValue||0);
+    const over = mileage - dueAt;
+    body += '- ' + p.label + ': due at ' + dueAt.toLocaleString() + ' ' + unit + (over>=0 ? ' (' + over.toLocaleString() + ' ' + unit + ' overdue)' : '') + '\n';
+  });
+  return body;
+}
+async function sendPmNotification(bus, driver, mileage, timestamp, dueItems){
+  const cat = categoryFor(bus);
+  const subject = 'Maintenance due — ' + bus.id + ' (' + cat.label + ') — ' + dueItems.map(p=>p.label).join(', ');
+  const body = buildPmEmailBody(bus, driver, mileage, timestamp, dueItems);
+  return await sendAppEmail(subject, body, recipientsForPm(cat));
+}
+
+
+
+const ISSUE_CATEGORIES = ['Brakes','Engine','Transmission','A/C · Heat','Tires / Tracks','Lights · Electrical','Hydraulics','Cutting Unit / Reels','Winch / Cable','PTO / Attachments','Body · Exterior','Fluids / Leak','Other'];
+
+function defaultCategories(){
+  return [
+    { key:'shuttle', label:'Shuttle Bus', trackingUnit:'miles', checkMode:'shift', checklist:[
+      {key:'fluids', label:'Fluid levels'},
+      {key:'tires', label:'Tires / pressure'},
+      {key:'lights', label:'Lights & signals'},
+      {key:'brakes', label:'Brakes'}
+    ]},
+    { key:'turf', label:'Turf Equipment', trackingUnit:'hours', checkMode:'daily', checklist:[
+      {key:'fluids', label:'Fluid levels (oil, hydraulic, coolant)'},
+      {key:'cutting', label:'Blades / reels — condition & sharpness'},
+      {key:'belts', label:'Belts & pulleys'},
+      {key:'tires', label:'Tires / pressure'},
+      {key:'grease', label:'Grease fittings'},
+      {key:'safety', label:'Safety switches / interlocks'}
+    ]},
+    { key:'groomer', label:'Snow Groomer', trackingUnit:'hours', checkMode:'daily', checklist:[
+      {key:'fluids', label:'Fluid levels (oil, hydraulic, coolant)'},
+      {key:'tracks', label:'Tracks & tension'},
+      {key:'tiller', label:'Tiller condition'},
+      {key:'winch', label:'Winch cable & drum'},
+      {key:'lights', label:'Lights & beacon'},
+      {key:'cab', label:'Cab heat / defrost / wipers'}
+    ]},
+    { key:'utv', label:'Side-by-Side / UTV', trackingUnit:'hours', checkMode:'daily', checklist:[
+      {key:'fluids', label:'Fluid levels'},
+      {key:'tires', label:'Tires / pressure'},
+      {key:'brakes', label:'Brakes'},
+      {key:'lights', label:'Lights'},
+      {key:'accessories', label:'Winch / accessories'},
+      {key:'restraints', label:'Seatbelts / ROPS'}
+    ]},
+    { key:'minitruck', label:'Mini Truck', trackingUnit:'miles', checkMode:'daily', checklist:[
+      {key:'fluids', label:'Fluid levels'},
+      {key:'tires', label:'Tires / pressure'},
+      {key:'lights', label:'Lights & signals'},
+      {key:'brakes', label:'Brakes'},
+      {key:'bed', label:'Bed / tailgate / attachments'}
+    ]},
+    { key:'boxtruck', label:'Box Truck', trackingUnit:'miles', checkMode:'daily', checklist:[
+      {key:'fluids', label:'Fluid levels'},
+      {key:'tires', label:'Tires / pressure'},
+      {key:'lights', label:'Lights & signals'},
+      {key:'brakes', label:'Brakes'},
+      {key:'liftgate', label:'Lift gate / ramp'},
+      {key:'cargo', label:'Cargo area / tie-downs'}
+    ]},
+    { key:'minivan', label:'Mini Van', trackingUnit:'miles', checkMode:'daily', checklist:[
+      {key:'fluids', label:'Fluid levels'},
+      {key:'tires', label:'Tires / pressure'},
+      {key:'lights', label:'Lights & signals'},
+      {key:'brakes', label:'Brakes'},
+      {key:'seatbelts', label:'Seatbelts / interior'}
+    ]},
+    { key:'truck', label:'Truck', trackingUnit:'miles', checkMode:'daily', checklist:[
+      {key:'fluids', label:'Fluid levels'},
+      {key:'tires', label:'Tires / pressure'},
+      {key:'lights', label:'Lights & signals'},
+      {key:'brakes', label:'Brakes'},
+      {key:'bed', label:'Bed / tailgate'},
+      {key:'hitch', label:'Hitch / towing equipment'}
+    ]},
+    { key:'tractor', label:'Tractor', trackingUnit:'hours', checkMode:'daily', checklist:[
+      {key:'fluids', label:'Fluid levels (engine, hydraulic, coolant)'},
+      {key:'tires', label:'Tires / pressure'},
+      {key:'pto', label:'PTO & attachments'},
+      {key:'hydraulics', label:'Hydraulics / 3-point hitch'},
+      {key:'brakes', label:'Brakes'},
+      {key:'lights', label:'Lights'}
+    ]},
+    { key:'trolley', label:'Trolley', trackingUnit:'hours', checkMode:'daily', checklist:[
+      {key:'fluids', label:'Fluid levels'},
+      {key:'tires', label:'Tires / pressure'},
+      {key:'brakes', label:'Brakes'},
+      {key:'lights', label:'Lights'},
+      {key:'battery', label:'Battery / charge level'}
+    ]},
+    { key:'snowgun', label:'Snow Gun', trackingUnit:'hours', checkMode:'daily', checklist:[
+      {key:'hoses', label:'Air & water hoses / fittings'},
+      {key:'nozzles', label:'Nozzles / tips condition'},
+      {key:'electrical', label:'Electrical connections'},
+      {key:'mounting', label:'Mounting / stability'},
+      {key:'operation', label:'Fan or compressor operation'}
+    ]},
+    { key:'blower', label:'Blower', trackingUnit:'hours', checkMode:'daily', checklist:[
+      {key:'fluids', label:'Fluid levels'},
+      {key:'auger', label:'Auger / impeller condition'},
+      {key:'belts', label:'Belts & chains'},
+      {key:'chute', label:'Chute / discharge operation'},
+      {key:'tires', label:'Tires / tracks'}
+    ]},
+    { key:'trailer', label:'Trailer', trackingUnit:'none', checkMode:'daily', checklist:[
+      {key:'tires', label:'Tires / pressure'},
+      {key:'lights', label:'Lights & connectors'},
+      {key:'brakes', label:'Brakes (if equipped)'},
+      {key:'hitch', label:'Hitch / coupler / safety chains'},
+      {key:'deck', label:'Deck / ramp / tie-downs'}
+    ]},
+    { key:'skilift', label:'Ski Lift', trackingUnit:'hours', checkMode:'daily', checklist:[
+      {key:'brakes', label:'Brake system (hydraulic/mechanical) test'},
+      {key:'haulrope', label:'Haul rope condition'},
+      {key:'sheaves', label:'Sheave bearings & liners'},
+      {key:'bullwheel', label:'Bullwheel & drive system'},
+      {key:'estop', label:'E-stop / safety circuit test'},
+      {key:'comms', label:'Communication system (phone/radio)'},
+      {key:'terminals', label:'Loading / unloading area condition'}
+    ]},
+    { key:'hvac', label:'HVAC Unit', trackingUnit:'hours', checkMode:'daily', checklist:[
+      {key:'filters', label:'Filter condition'},
+      {key:'refrigerant', label:'Refrigerant level / pressure'},
+      {key:'belts', label:'Belts & bearings'},
+      {key:'electrical', label:'Electrical connections'},
+      {key:'controls', label:'Thermostat / controls calibration'},
+      {key:'drain', label:'Condensate drain clear'}
+    ]},
+    { key:'plumbing', label:'Plumbing Equipment', trackingUnit:'none', checkMode:'daily', checklist:[
+      {key:'leaks', label:'Visible leaks'},
+      {key:'valves', label:'Valve operation'},
+      {key:'pressure', label:'Water pressure'},
+      {key:'pump', label:'Pump / motor condition (if equipped)'},
+      {key:'backflow', label:'Backflow preventer'}
+    ]},
+    { key:'pool', label:'Pool Equipment', trackingUnit:'hours', checkMode:'daily', checklist:[
+      {key:'pump', label:'Pump & motor operation'},
+      {key:'filter', label:'Filter pressure / backwash'},
+      {key:'chemfeed', label:'Chemical feed system'},
+      {key:'heater', label:'Heater operation'},
+      {key:'chemistry', label:'Water chemistry test'},
+      {key:'safety', label:'Safety equipment (covers, alarms)'}
+    ]}
+  ];
+}
+
+/* ---------- app state ---------- */
+const state = {
+  mode: 'driver',
+  buses: [],
+  categories: [],
+  departments: [],
+  currentDepartmentKey: null, // null = full admin; otherwise the signed-in department's key
+  currentDepartmentName: '', // display name for the signed-in department (from its profile row)
+  shiftsCache: {}, // busId -> array
+  settings: { notifyEmail: '', pmNotifyEmail: '' },
+  qrLocked: false,
+  siteUnlocked: false,
+  qrLockedBusId: null,
+  driver: { screen: 'pick', busId: null, action: null, typeFilter: 'all', locationFilter: 'all', sort: 'id' },
+  admin: { tab: 'overview' }
+};
+
+const app = document.getElementById('app');
+
+function categoryFor(bus){
+  const key = (bus && bus.category) || 'shuttle';
+  return state.categories.find(c => c.key === key) || state.categories[0] || defaultCategories()[0];
+}
+function unitLabel(trackingUnit){
+  if(trackingUnit === 'hours') return 'hrs';
+  if(trackingUnit === 'none') return '';
+  return 'mi';
+}
+function readingLabel(trackingUnit){
+  if(trackingUnit === 'hours') return 'Hour meter reading (hours)';
+  if(trackingUnit === 'none') return null;
+  return 'Odometer reading (miles)';
+}
+function checkModeFor(cat){
+  return cat.checkMode || (cat.key==='shuttle' ? 'shift' : 'daily');
+}
+// Department scoping: a null currentDepartmentKey means full admin (sees everything).
+// A department session only ever sees categories explicitly assigned to it, and only
+// equipment whose category is one of those.
+function isFullAdmin(){
+  return !state.currentDepartmentKey;
+}
+function categoriesForCurrentUser(){
+  if(isFullAdmin()) return state.categories;
+  return state.categories.filter(c => c.department === state.currentDepartmentKey);
+}
+function busesForCurrentUser(){
+  if(isFullAdmin()) return state.buses;
+  const allowedKeys = categoriesForCurrentUser().map(c=>c.key);
+  return state.buses.filter(b => allowedKeys.includes(b.category||'shuttle'));
+}
+function currentDepartmentName(){
+  if(state.currentDepartmentName) return state.currentDepartmentName;
+  const d = state.departments.find(d=>d.key===state.currentDepartmentKey);
+  return d ? d.name : '';
+}
+const LOCATION_PREFIXES = { '5':'Summit', '6':'Schuss', '7':'Cedar River', '8':'Legend', '9':'Hawks Eye' };
+const LOCATIONS = ['Summit','Schuss','Schuss Mtn','Cedar River','Legend','Hawks Eye','Fleet','Building Maintenance'];
+function locationForBus(bus){
+  if(bus && bus.location) return bus.location;
+  const id = ((bus && bus.id) || '').trim();
+  return LOCATION_PREFIXES[id[0]] || 'Fleet';
+}
+// Returns every flagged item on a shift record — failed checklist entries and reported issues alike —
+// in a common shape: {source:'check'|'issue', label, note, severity}
+function allFlaggedItems(s, cat){
+  const fromChecks = s.preTrip ? Object.entries(s.preTrip)
+    .filter(([k,v]) => v.status==='fail')
+    .map(([k,v]) => {
+      const item = cat && cat.checklist ? cat.checklist.find(c=>c.key===k) : null;
+      return {source:'check', label: item ? item.label : k, note: v.note, severity: v.severity||'minor'};
+    }) : [];
+  const fromIssues = (s.issues||[]).map(i => ({source:'issue', label: i.category, note: i.note, severity: i.severity||'minor'}));
+  return fromChecks.concat(fromIssues);
+}
+function recordHasUrgent(s, cat){
+  return allFlaggedItems(s, cat).some(i=>i.severity==='urgent');
+}
+
+/* ---------- data access ---------- */
+// Equipment and equipment types are sharded across one row per department (key
+// 'buses:<deptKey>' / 'categories:<deptKey>', with '_core' used for anything not assigned to
+// a department). Reads of these shards are open to everyone at the database level, since the
+// no-login QR driver flow needs to find any unit regardless of department. What the database
+// actually restricts is WRITES: a signed-in department account can only upsert its own shard,
+// enforced by RLS, not by this file. Full admin merges every shard back into one flat list so
+// the rest of the app's logic (busesForCurrentUser, categoriesForCurrentUser, etc.) is unchanged.
+async function loadShardedRows(prefix){
+  if(!supa) return [];
+  try{
+    const { data, error } = await supa.from('kv_store').select('key,value').like('key', prefix + ':%');
+    if(error || !data) return [];
+    return data.flatMap(row => Array.isArray(row.value) ? row.value : []);
+  }catch(e){
+    console.error('loadShardedRows failed', prefix, e);
+    return [];
+  }
+}
+function deptKeyOf(obj){
+  return (obj && obj.department) || '_core';
+}
+async function saveSharded(prefix, items, groupKeyFn){
+  if(isFullAdmin()){
+    // Full admin can touch every shard, so re-zero every known department (plus '_core') to
+    // avoid a shard that just emptied out staying stale.
+    const allKeys = ['_core', ...state.departments.map(d=>d.key)];
+    const groups = {};
+    allKeys.forEach(k => groups[k] = []);
+    items.forEach(item => {
+      const k = groupKeyFn(item);
+      if(!groups[k]) groups[k] = [];
+      groups[k].push(item);
+    });
+    let allOk = true;
+    for(const k of Object.keys(groups)){
+      const ok = await setJSON(prefix + ':' + k, groups[k]);
+      if(!ok) allOk = false;
+    }
+    return allOk;
+  } else {
+    // A department account only ever has permission to write its own shard. Everything in
+    // scope for this session already belongs to that one department (see busesForCurrentUser /
+    // categoriesForCurrentUser), so filtering to our own key reconstructs our shard safely
+    // without attempting — and getting rejected for — writes to shards we don't own.
+    const mine = items.filter(item => groupKeyFn(item) === state.currentDepartmentKey);
+    return await setJSON(prefix + ':' + state.currentDepartmentKey, mine);
+  }
+}
+async function loadBuses(){
+  state.buses = await loadShardedRows('buses');
+}
+async function saveBuses(){
+  return await saveSharded('buses', state.buses, deptKeyOf);
+}
+async function loadCategories(){
+  let cats = await loadShardedRows('categories');
+  if(!cats.length){
+    cats = defaultCategories();
+    // Seed once so they're immediately editable in Admin. Seeded categories have no
+    // department, so they land in the '_core' shard (full-admin only).
+    await setJSON('categories:_core', cats);
+  } else {
+    let changed = false;
+    cats.forEach(c => {
+      if(!c.checkMode){ c.checkMode = (c.key==='shuttle' ? 'shift' : 'daily'); changed = true; }
+    });
+    if(changed){ state.categories = cats; await saveSharded('categories', cats, deptKeyOf); }
+  }
+  state.categories = cats;
+}
+async function saveCategories(){
+  return await saveSharded('categories', state.categories, deptKeyOf);
+}
+async function loadDepartments(){
+  state.departments = await getJSON('departments', []);
+}
+async function saveDepartments(){
+  return await setJSON('departments', state.departments);
+}
+async function loadSettings(){
+  state.settings = await getJSON('settings', { notifyEmail: '', pmNotifyEmail: '' });
+}
+async function saveSettings(){
+  return await setJSON('settings', state.settings);
+}
+async function loadShifts(busId){
+  if(!state.shiftsCache[busId]){
+    state.shiftsCache[busId] = await getJSON('shifts:' + busId, []);
+  }
+  return state.shiftsCache[busId];
+}
+async function saveShifts(busId, arr){
+  state.shiftsCache[busId] = arr;
+  return await setJSON('shifts:' + busId, arr);
+}
+// Fetches shift history for many buses in as few round trips as possible (chunked to stay
+// well under any URL-length limits), instead of one request per bus. Populates shiftsCache
+// for every requested id, defaulting to [] for any bus with no shift history yet.
+async function loadShiftsBatch(busIds){
+  const needed = busIds.filter(id => !state.shiftsCache[id]);
+  if(!needed.length || !supa) return;
+  const CHUNK = 200;
+  for(let i=0; i<needed.length; i+=CHUNK){
+    const chunk = needed.slice(i, i+CHUNK);
+    const keys = chunk.map(id => 'shifts:' + id);
+    try{
+      const { data, error } = await supa.from('kv_store').select('key,value').in('key', keys);
+      if(error){
+        console.error('batch shift load failed', error);
+        chunk.forEach(id => { if(!state.shiftsCache[id]) state.shiftsCache[id] = []; });
+        continue;
+      }
+      const found = new Set();
+      (data||[]).forEach(row => {
+        const busId = row.key.slice('shifts:'.length);
+        state.shiftsCache[busId] = row.value;
+        found.add(busId);
+      });
+      chunk.forEach(id => { if(!found.has(id)) state.shiftsCache[id] = []; });
+    }catch(e){
+      console.error('batch shift load failed', e);
+      chunk.forEach(id => { if(!state.shiftsCache[id]) state.shiftsCache[id] = []; });
+    }
+  }
+}
+async function loadAllShifts(){
+  await loadShiftsBatch(state.buses.map(b=>b.id));
+  const all = [];
+  state.buses.forEach(b => {
+    (state.shiftsCache[b.id] || []).forEach(s => all.push(s));
+  });
+  all.sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
+  return all;
+}
+function lastMileage(busId){
+  const arr = state.shiftsCache[busId] || [];
+  if(!arr.length) return null;
+  const sorted = [...arr].sort((a,b)=> new Date(b.timestamp)-new Date(a.timestamp));
+  return sorted[0].mileage;
+}
+
+/* ---------- render root ---------- */
+function render(){
+  app.innerHTML = '';
+  const toggle = document.getElementById('modeToggle');
+  if(!state.qrLocked && !state.siteUnlocked){
+    if(toggle) toggle.style.display = 'none';
+    renderSiteGate();
+    return;
+  }
+  if(toggle && !state.qrLocked) toggle.style.display = 'flex';
+  if(state.mode === 'driver') renderDriver();
+  else renderAdmin();
+}
+
+function renderSiteGate(){
+  const wrap = el('div', 'wrap narrow');
+  const card = el('div','card');
+  card.innerHTML = '<div class="section-label">Sign in to continue</div>';
+
+  const emailField = el('div','field'); emailField.style.marginTop='12px';
+  emailField.innerHTML = '<label>Email</label>';
+  const emailInput = document.createElement('input');
+  emailInput.type='email'; emailInput.placeholder='you@shantycreek.com'; emailInput.id='site-email-input';
+  emailInput.autocomplete='username';
+  emailField.appendChild(emailInput);
+  card.appendChild(emailField);
+
+  const pwField = el('div','field'); pwField.style.marginTop='10px';
+  pwField.innerHTML = '<label>Password</label>';
+  const input = document.createElement('input');
+  input.type='password'; input.placeholder='Password'; input.id='site-pw-input';
+  input.autocomplete='current-password';
+  pwField.appendChild(input);
+  card.appendChild(pwField);
+
+  const errMsg = el('div','note'); errMsg.style.color='var(--bad)'; errMsg.style.display='none';
+  card.appendChild(errMsg);
+
+  const submitBtn = document.createElement('button');
+  submitBtn.className='btn btn-primary'; submitBtn.style.marginTop='10px'; submitBtn.textContent='Sign in';
+  async function attempt(){
+    const email = emailInput.value.trim();
+    const password = input.value;
+    if(!email || !password){
+      errMsg.textContent = 'Enter both an email and a password.';
+      errMsg.style.display = 'block';
+      return;
+    }
+    submitBtn.disabled = true; submitBtn.textContent = 'Signing in...';
+    errMsg.style.display = 'none';
+    const { data, error } = await supa.auth.signInWithPassword({ email, password });
+    if(error || !data.user){
+      submitBtn.disabled = false; submitBtn.textContent = 'Sign in';
+      errMsg.textContent = 'Incorrect email or password — try again.';
+      errMsg.style.display = 'block';
+      input.value = '';
+      input.focus();
+      return;
+    }
+    const profile = await fetchMyProfile(data.user.id);
+    if(!profile){
+      submitBtn.disabled = false; submitBtn.textContent = 'Sign in';
+      errMsg.textContent = 'That login isn\'t linked to a department yet — ask Kody to set it up.';
+      errMsg.style.display = 'block';
+      await supa.auth.signOut();
+      return;
+    }
+    applyProfile(profile);
+    state.mode = 'admin';
+    if(!profile.is_full_admin){
+      state.admin.tab = 'buses';
+      const subtitle = document.querySelector('.brand-text .t2');
+      if(subtitle) subtitle.textContent = profile.department_name || 'Department';
+    }
+    render();
+  }
+  submitBtn.onclick = attempt;
+  input.addEventListener('keydown', (e)=>{ if(e.key==='Enter') attempt(); });
+  emailInput.addEventListener('keydown', (e)=>{ if(e.key==='Enter') input.focus(); });
+  card.appendChild(submitBtn);
+
+  wrap.appendChild(card);
+  app.appendChild(wrap);
+  setTimeout(()=>{ const i = document.getElementById('site-email-input'); if(i) i.focus(); }, 50);
+}
+
+/* ================= DRIVER MODE ================= */
+function renderDriver(){
+  const wrap = el('div', 'wrap narrow');
+  app.appendChild(wrap);
+
+  if(state.qrLocked && state.driver.screen === 'pick'){
+    state.driver.busId = state.qrLockedBusId;
+    state.driver.screen = 'action';
+  }
+
+  if(state.driver.screen === 'action'){
+    const selBus = state.buses.find(b=>b.id===state.driver.busId);
+    if(selBus && checkModeFor(categoryFor(selBus)) === 'daily'){
+      formPreTrip = {}; formIssues = [];
+      state.driver.action = 'daily';
+      state.driver.screen = 'form';
+    }
+  }
+
+  if(state.driver.screen === 'pick'){
+    renderBusPicker(wrap);
+  } else if(state.driver.screen === 'action'){
+    renderActionPicker(wrap);
+  } else if(state.driver.screen === 'form'){
+    renderShiftForm(wrap);
+  } else if(state.driver.screen === 'confirm'){
+    renderConfirm(wrap);
+  }
+}
+
+function renderBusPicker(wrap){
+  const card = el('div','card');
+  card.innerHTML = '<div class="section-label">Select your equipment</div>';
+  const myBuses = busesForCurrentUser();
+  if(!myBuses.length){
+    card.appendChild(el('div','empty','No equipment set up yet. Ask your manager to add units in Admin → Equipment.'));
+  } else {
+    const myCats = categoriesForCurrentUser();
+    const typeVal = state.driver.typeFilter || 'all';
+    const locationVal = state.driver.locationFilter || 'all';
+    const sortVal = state.driver.sort || 'id';
+
+    const toolbar = el('div','toolbar');
+    const typeSel = document.createElement('select');
+    typeSel.innerHTML = '<option value="all">All types</option>' + myCats.map(c=>`<option value="${escapeHtml(c.key)}">${escapeHtml(c.label)}</option>`).join('');
+    typeSel.value = typeVal;
+    typeSel.onchange = ()=>{ state.driver.typeFilter = typeSel.value; render(); };
+    toolbar.appendChild(document.createTextNode('Type: '));
+    toolbar.appendChild(typeSel);
+
+    const locSel = document.createElement('select');
+    locSel.innerHTML = '<option value="all">All locations</option>' + LOCATIONS.map(l=>`<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('');
+    locSel.value = locationVal;
+    locSel.onchange = ()=>{ state.driver.locationFilter = locSel.value; render(); };
+    toolbar.appendChild(document.createTextNode('Location: '));
+    toolbar.appendChild(locSel);
+
+    const sortSel = document.createElement('select');
+    sortSel.innerHTML = '<option value="id">Sort: ID</option><option value="type">Sort: Type</option><option value="location">Sort: Location</option>';
+    sortSel.value = sortVal;
+    sortSel.onchange = ()=>{ state.driver.sort = sortSel.value; render(); };
+    toolbar.appendChild(sortSel);
+    card.appendChild(toolbar);
+
+    let visibleBuses = myBuses.filter(b=>{
+      const typeOk = typeVal==='all' || (b.category||'shuttle')===typeVal;
+      const locOk = locationVal==='all' || locationForBus(b)===locationVal;
+      return typeOk && locOk;
+    });
+    visibleBuses = visibleBuses.slice().sort((a,b)=>{
+      if(sortVal==='type') return categoryFor(a).label.localeCompare(categoryFor(b).label) || a.id.localeCompare(b.id, undefined, {numeric:true});
+      if(sortVal==='location') return locationForBus(a).localeCompare(locationForBus(b)) || a.id.localeCompare(b.id, undefined, {numeric:true});
+      return a.id.localeCompare(b.id, undefined, {numeric:true});
+    });
+
+    if(!visibleBuses.length){
+      card.appendChild(el('div','empty','No equipment matches this filter.'));
+    } else {
+      const grid = el('div','tile-grid');
+      visibleBuses.forEach(b => {
+        const cat = categoryFor(b);
+        const t = document.createElement('button');
+        t.className = 'tile';
+        const mi = lastMileage(b.id);
+        t.innerHTML = `<div class="bus-id">${escapeHtml(b.id)}</div><div class="bus-name">${escapeHtml(b.name||'')}</div><div class="bus-name" style="opacity:.8;">${escapeHtml(cat.label)} · ${escapeHtml(locationForBus(b))}</div>` +
+          (mi!=null ? `<div class="bus-mi">${mi.toLocaleString()} ${unitLabel(cat.trackingUnit)}</div>` : '<div class="bus-mi">no readings yet</div>');
+        t.onclick = () => { formPreTrip = {}; state.driver.busId = b.id; state.driver.screen='action'; render(); };
+        grid.appendChild(t);
+      });
+      card.appendChild(grid);
+    }
+  }
+  wrap.appendChild(card);
+}
+
+function renderActionPicker(wrap){
+  const bus = state.buses.find(b=>b.id===state.driver.busId);
+  const card = el('div','card');
+  card.innerHTML = `<div class="section-label">${escapeHtml(bus.id)} — ${escapeHtml(bus.name||'')}</div>`;
+  const choice = el('div','action-choice');
+  const startBtn = document.createElement('button');
+  startBtn.className='action-btn start'; startBtn.textContent='Start of Shift';
+  startBtn.onclick = () => { formPreTrip = {}; formIssues = []; state.driver.action='start'; state.driver.screen='form'; render(); };
+  const endBtn = document.createElement('button');
+  endBtn.className='action-btn end'; endBtn.textContent='End of Shift';
+  endBtn.onclick = () => { formIssues = []; state.driver.action='end'; state.driver.screen='form'; render(); };
+  choice.appendChild(startBtn); choice.appendChild(endBtn);
+  card.appendChild(choice);
+  wrap.appendChild(card);
+  if(!state.qrLocked){
+    const back = el('button','btn-link','← Choose a different bus');
+    back.onclick = () => { state.driver.screen='pick'; state.driver.busId=null; render(); };
+    wrap.appendChild(back);
+  }
+}
+
+let formIssues = []; // transient issue rows while building end-of-shift form
+let formPreTrip = {};
+function makeEmptyPreTrip(checklist){
+  const o = {};
+  (checklist || []).forEach(c => o[c.key] = {status:null, note:'', severity:'minor'});
+  return o;
+}
+
+function renderShiftForm(wrap){
+  const bus = state.buses.find(b=>b.id===state.driver.busId);
+  const action = state.driver.action;
+  const cat = categoryFor(bus);
+  const lastMi = lastMileage(bus.id);
+  const unit = unitLabel(cat.trackingUnit);
+  const showChecklist = (action === 'start' || action === 'daily');
+  const showIssues = true; // urgent / out-of-service reporting available on every screen now
+
+  if(showChecklist && Object.keys(formPreTrip).length === 0){
+    formPreTrip = makeEmptyPreTrip(cat.checklist);
+  }
+
+  const card = el('div','card');
+  const head = el('div','ticket-head');
+  head.innerHTML = `<div><div class="bus-big">${escapeHtml(bus.id)}</div><div class="sub">${escapeHtml(bus.name||'')} · ${escapeHtml(cat.label)}</div></div>`;
+  const badgeText = action==='start' ? 'Start of Shift' : action==='end' ? 'End of Shift' : 'Equipment Check';
+  const badge = el('span', 'badge ' + (action==='end' ? 'end' : 'start'), badgeText);
+  head.appendChild(badge);
+  card.appendChild(head);
+
+  const form = el('div');
+
+  // Driver / operator name
+  const fName = el('div','field');
+  fName.innerHTML = '<label>' + (action==='daily' ? 'Operator name' : 'Driver name') + '</label>';
+  const nameInput = document.createElement('input');
+  nameInput.type='text'; nameInput.placeholder='Full name'; nameInput.id='drv-name';
+  fName.appendChild(nameInput);
+  form.appendChild(fName);
+
+  // Odometer / hour meter (skipped for equipment with no meter, e.g. trailers)
+  if(cat.trackingUnit !== 'none'){
+    const fOdo = el('div','field');
+    fOdo.innerHTML = '<label>' + readingLabel(cat.trackingUnit) + '</label>';
+    const odoInput = document.createElement('input');
+    odoInput.type='number'; odoInput.inputMode='numeric'; odoInput.className='odo-input';
+    odoInput.placeholder = lastMi!=null ? 'last: ' + lastMi.toLocaleString() : (cat.trackingUnit==='hours' ? 'e.g. 1420' : 'e.g. 48213');
+    odoInput.id='drv-odo';
+    fOdo.appendChild(odoInput);
+    if(lastMi!=null) fOdo.appendChild(el('div','note','Last recorded: ' + lastMi.toLocaleString() + ' ' + unit));
+    form.appendChild(fOdo);
+  }
+
+  if(showChecklist){
+    form.appendChild(el('div','section-label', action==='daily' ? 'Check — mark each Pass or Fail' : 'Pre-trip check — mark each Pass or Fail'));
+    const box = el('div','card');
+    box.style.padding='4px 12px'; box.style.boxShadow='none'; box.style.marginBottom='14px';
+    const checksWrap = el('div'); checksWrap.id='checksWrap';
+    renderCheckRows(checksWrap, cat.checklist);
+    box.appendChild(checksWrap);
+    form.appendChild(box);
+  }
+
+  if(showIssues){
+    const issuesLabel = action==='daily' ? 'Any additional issues to report?'
+      : action==='start' ? 'Report an issue — including urgent / out of service'
+      : 'Mechanical issues this shift';
+    form.appendChild(el('div','section-label', issuesLabel));
+    const issuesWrap = el('div'); issuesWrap.id='issuesWrap';
+    renderIssueRows(issuesWrap);
+    form.appendChild(issuesWrap);
+    const addBtn = document.createElement('button');
+    addBtn.className='btn-add-issue'; addBtn.textContent='+ Report an issue';
+    addBtn.onclick = ()=>{ formIssues.push({id:uid('is'), category:ISSUE_CATEGORIES[0], severity:'minor', note:''}); renderIssueRows(issuesWrap); };
+    form.appendChild(addBtn);
+  }
+
+  const fNote = el('div','field'); fNote.style.marginTop='14px';
+  fNote.innerHTML = '<label>Notes (optional)</label>';
+  const ta = document.createElement('textarea'); ta.rows=2; ta.id='drv-notes'; ta.placeholder='Anything else worth noting...';
+  fNote.appendChild(ta);
+  form.appendChild(fNote);
+
+  card.appendChild(form);
+
+  const submitBtn = document.createElement('button');
+  submitBtn.className='btn btn-primary'; submitBtn.style.marginTop='6px';
+  submitBtn.textContent = action==='start' ? 'Submit — Start Shift' : action==='end' ? 'Submit — End Shift' : 'Submit Check';
+  submitBtn.onclick = () => submitShift(bus, action, submitBtn);
+  card.appendChild(submitBtn);
+
+  wrap.appendChild(card);
+  if(action === 'daily'){
+    if(!state.qrLocked){
+      const back = el('button','btn-link','← Choose a different equipment');
+      back.onclick = () => { state.driver.screen='pick'; state.driver.busId=null; formIssues=[]; formPreTrip={}; render(); };
+      wrap.appendChild(back);
+    }
+  } else {
+    const back = el('button','btn-link','← Back');
+    back.onclick = () => { state.driver.screen='action'; formIssues=[]; formPreTrip={}; render(); };
+    wrap.appendChild(back);
+  }
+}
+
+function renderCheckRows(container, checklist){
+  container.innerHTML='';
+  checklist.forEach(item => {
+    const state_ = formPreTrip[item.key];
+    const row = el('div','check-row');
+    const top = el('div','check-row-top');
+    top.appendChild(el('div','lbl',item.label));
+    const pair = el('div','pf-pair');
+    const passBtn = el('button','pf-btn pass'+(state_.status==='pass'?' on':''),'Pass');
+    const failBtn = el('button','pf-btn fail'+(state_.status==='fail'?' on':''),'Fail');
+    passBtn.onclick = (e)=>{ e.preventDefault(); formPreTrip[item.key].status='pass'; renderCheckRows(container, checklist); };
+    failBtn.onclick = (e)=>{ e.preventDefault(); formPreTrip[item.key].status='fail'; renderCheckRows(container, checklist); };
+    pair.appendChild(passBtn); pair.appendChild(failBtn);
+    top.appendChild(pair);
+    row.appendChild(top);
+    if(state_.status === 'fail'){
+      const sevWrap = el('div','sev-pill');
+      sevWrap.style.margin = '8px 0';
+      const minorBtn = el('button','sev-btn sel-minor'+(state_.severity==='minor'?' on':''),'Minor');
+      const urgentBtn = el('button','sev-btn sel-urgent'+(state_.severity==='urgent'?' on':''),'Urgent · Out of service');
+      minorBtn.onclick = (e)=>{ e.preventDefault(); formPreTrip[item.key].severity='minor'; renderCheckRows(container, checklist); };
+      urgentBtn.onclick = (e)=>{ e.preventDefault(); formPreTrip[item.key].severity='urgent'; renderCheckRows(container, checklist); };
+      sevWrap.appendChild(minorBtn); sevWrap.appendChild(urgentBtn);
+      row.appendChild(sevWrap);
+
+      const noteWrap = el('div','check-fail-note');
+      const ta = document.createElement('textarea');
+      ta.rows=2; ta.placeholder='What\'s wrong with ' + item.label.toLowerCase() + '?'; ta.value = state_.note;
+      ta.oninput = ()=> formPreTrip[item.key].note = ta.value;
+      noteWrap.appendChild(ta);
+      row.appendChild(noteWrap);
+    }
+    container.appendChild(row);
+  });
+}
+
+function renderIssueRows(container){
+  container.innerHTML='';
+  if(!formIssues.length){
+    container.appendChild(el('div','note','No issues reported. If everything ran fine, leave this empty.'));
+    return;
+  }
+  formIssues.forEach((iss, idx) => {
+    const row = el('div','issue-row');
+    const top = el('div','issue-row-top');
+    const sel = document.createElement('select');
+    ISSUE_CATEGORIES.forEach(c=>{ const o=document.createElement('option'); o.value=c; o.textContent=c; if(c===iss.category)o.selected=true; sel.appendChild(o); });
+    sel.onchange = ()=> iss.category = sel.value;
+    top.appendChild(sel);
+    const sevWrap = el('div','sev-pill');
+    const minorBtn = el('button','sev-btn sel-minor'+(iss.severity==='minor'?' on':''),'Minor');
+    const urgentBtn = el('button','sev-btn sel-urgent'+(iss.severity==='urgent'?' on':''),'Urgent · Out of service');
+    minorBtn.onclick = (e)=>{ e.preventDefault(); iss.severity='minor'; renderIssueRows(container); };
+    urgentBtn.onclick = (e)=>{ e.preventDefault(); iss.severity='urgent'; renderIssueRows(container); };
+    sevWrap.appendChild(minorBtn); sevWrap.appendChild(urgentBtn);
+    top.appendChild(sevWrap);
+    const rm = el('button','remove-issue','Remove');
+    rm.onclick = (e)=>{ e.preventDefault(); formIssues.splice(idx,1); renderIssueRows(container); };
+    top.appendChild(rm);
+    row.appendChild(top);
+    const ta = document.createElement('textarea');
+    ta.rows=2; ta.placeholder='Describe the issue...'; ta.value=iss.note;
+    ta.oninput = ()=> iss.note = ta.value;
+    row.appendChild(ta);
+    container.appendChild(row);
+  });
+}
+
+async function submitShift(bus, action, btn){
+  const cat = categoryFor(bus);
+  const name = document.getElementById('drv-name').value.trim();
+  const odoEl = document.getElementById('drv-odo');
+  const notesEl = document.getElementById('drv-notes');
+  const notes = notesEl ? notesEl.value.trim() : '';
+
+  if(!name){ alert('Please enter the driver name.'); return; }
+
+  let mileage = null;
+  if(cat.trackingUnit !== 'none'){
+    const odoVal = odoEl ? odoEl.value : '';
+    if(!odoVal){ alert('Please enter the ' + (cat.trackingUnit==='hours' ? 'hour meter reading.' : 'odometer reading.')); return; }
+    mileage = Number(odoVal);
+    if(Number.isNaN(mileage) || mileage < 0){ alert('That reading looks invalid.'); return; }
+  }
+
+  let failedChecks = [];
+  const hasChecklist = (action === 'start' || action === 'daily');
+  if(hasChecklist){
+    const unanswered = cat.checklist.filter(c => !formPreTrip[c.key] || !formPreTrip[c.key].status);
+    if(unanswered.length){ alert('Please mark every check as Pass or Fail before submitting.'); return; }
+    failedChecks = cat.checklist.filter(c => formPreTrip[c.key].status==='fail').map(c => ({label:c.label, note:formPreTrip[c.key].note, severity:formPreTrip[c.key].severity||'minor'}));
+  }
+
+  btn.disabled = true; btn.textContent = 'Saving...';
+
+  const record = {
+    id: uid('shift'),
+    busId: bus.id,
+    busName: bus.name || '',
+    action, driver: name, mileage,
+    timestamp: new Date().toISOString(),
+    notes,
+    preTrip: hasChecklist ? JSON.parse(JSON.stringify(formPreTrip)) : undefined,
+    issues: formIssues.map(i=>({category:i.category, severity:i.severity, note:i.note})),
+    issuesResolved: false
+  };
+
+  let ok = false;
+  try{
+    const arr = await loadShifts(bus.id);
+    arr.push(record);
+    ok = await saveShifts(bus.id, arr);
+  }catch(e){
+    console.error('shift save failed', e);
+    ok = false;
+  }
+
+  if(!ok){
+    alert('Could not save.' + (lastStorageError ? '\n\nDetails: ' + lastStorageError : ' Check your connection and try again.'));
+    btn.disabled = false;
+    btn.textContent = 'Retry submit';
+    return;
+  }
+
+  btn.textContent = 'Successfully submitted!';
+
+  // Every flagged item (any failed check, any reported issue) triggers the email — severity is still
+  // recorded and shown in Admin, it just no longer gates whether the notification goes out.
+  const allFlagged = failedChecks.concat(record.issues.map(i=>({label: i.category, note: i.note, severity: i.severity, isIssue:true})));
+  const emailItems = allFlagged.map(i=>({
+    label: (i.isIssue ? i.label + (i.severity==='urgent' ? ' — urgent / out of service' : '') : i.label) + (i.severity==='urgent' ? ' ⚠ URGENT' : ''),
+    note: i.note
+  }));
+
+  let emailResult = null;
+  if(emailItems.length){
+    emailResult = await sendFailureNotification(bus, name, mileage, record.timestamp, emailItems);
+  }
+
+  // Preventive maintenance: fires every time a due item is crossed, on every log, until marked done in Admin.
+  const pmDue = pmDueItemsFor(bus, mileage);
+  let pmEmailResult = null;
+  if(pmDue.length){
+    pmEmailResult = await sendPmNotification(bus, name, mileage, record.timestamp, pmDue);
+  }
+
+  state.driver.lastRecord = record;
+  state.driver.failedChecks = allFlagged;
+  state.driver.urgentCount = allFlagged.filter(i=>i.severity==='urgent').length;
+  state.driver.emailResult = emailResult;
+  state.driver.pmDue = pmDue;
+  state.driver.pmEmailResult = pmEmailResult;
+  setTimeout(()=>{
+    state.driver.screen = 'confirm';
+    formIssues = []; formPreTrip = makeEmptyPreTrip();
+    render();
+  }, 500);
+}
+
+function flaggedItemsFromRecord(rec, cat){
+  const failItems = (rec.preTrip ? Object.entries(rec.preTrip) : [])
+    .filter(([k,v]) => v.status==='fail')
+    .map(([k,v]) => {
+      const item = cat.checklist.find(c=>c.key===k);
+      const label = item ? item.label : k;
+      return {label: label + (v.severity==='urgent' ? ' ⚠ URGENT' : ''), note: v.note};
+    });
+  const issueItems = (rec.issues||[])
+    .map(i=>({label: i.category + (i.severity==='urgent' ? ' — urgent / out of service ⚠ URGENT' : ''), note: i.note}));
+  return failItems.concat(issueItems);
+}
+
+function renderConfirm(wrap){
+  const rec = state.driver.lastRecord;
+  const flagged = state.driver.failedChecks || [];
+  const urgentCount = state.driver.urgentCount || 0;
+  const card = el('div','card confirm-wrap');
+  const check = el('div','confirm-check','✓');
+  card.appendChild(check);
+  const h = document.createElement('h2'); h.textContent = 'Successfully submitted';
+  card.appendChild(h);
+  const recBus = state.buses.find(b=>b.id===rec.busId) || {id:rec.busId, name:rec.busName};
+  const recCat = categoryFor(recBus);
+  const recUnit = unitLabel(recCat.trackingUnit);
+  const recReading = rec.mileage!=null ? (rec.mileage.toLocaleString() + ' ' + recUnit + ' · ') : '';
+  card.appendChild(el('div','confirm-id', bus_(rec.busId) + ' · ' + recReading + fmtDT(rec.timestamp)));
+
+  if(flagged.length){
+    const banner = el('div','fail-banner');
+    banner.style.textAlign='left';
+    banner.innerHTML = '⚠ ' + flagged.length + ' item(s) flagged' + (urgentCount ? ' (' + urgentCount + ' urgent)' : '') + ': ' + flagged.map(c=>escapeHtml(c.label)).join(', ');
+    card.appendChild(banner);
+
+    const bus = state.buses.find(b=>b.id===rec.busId) || {id:rec.busId, name:rec.busName};
+    const statusLine = el('div','note'); statusLine.style.marginBottom='10px';
+    const resendBtn = document.createElement('button');
+    resendBtn.className='btn btn-outline';
+
+    const result = state.driver.emailResult;
+    if(result && result.ok){
+      statusLine.style.color = 'var(--ok)';
+      statusLine.textContent = '✓ Notification emailed automatically to ' + escapeHtml(state.settings.notifyEmail) + '.';
+      resendBtn.textContent = 'Resend notification';
+    } else if(result && result.method==='unconfigured'){
+      statusLine.style.color = 'var(--bad)';
+      statusLine.textContent = 'No notification sent — set up the notify email in Admin → Settings.';
+      resendBtn.style.display = 'none';
+    } else {
+      statusLine.style.color = 'var(--bad)';
+      statusLine.textContent = '✗ Notification failed to send: ' + escapeHtml((result && result.error) || 'unknown error') + '. This is still recorded in the shift log either way.';
+      resendBtn.textContent = 'Retry sending';
+    }
+    card.appendChild(statusLine);
+
+    if(resendBtn.style.display !== 'none'){
+      resendBtn.onclick = async ()=>{
+        resendBtn.disabled = true; resendBtn.textContent = 'Sending...';
+        const items = flaggedItemsFromRecord(rec, recCat);
+        const r = await sendFailureNotification(bus, rec.driver, rec.mileage, rec.timestamp, items);
+        state.driver.emailResult = r;
+        renderDriver();
+      };
+      card.appendChild(resendBtn);
+    }
+  }
+
+  const pmDue = state.driver.pmDue || [];
+  if(pmDue.length){
+    const pmBanner = el('div','fail-banner');
+    pmBanner.style.textAlign='left';
+    pmBanner.style.background = '#fff3d6'; pmBanner.style.borderColor = 'var(--warn)'; pmBanner.style.color = 'var(--warn)';
+    pmBanner.innerHTML = '🔧 Maintenance due: ' + pmDue.map(p=>escapeHtml(p.label)).join(', ');
+    card.appendChild(pmBanner);
+
+    const pmBus = state.buses.find(b=>b.id===rec.busId) || {id:rec.busId, name:rec.busName};
+    const pmStatusLine = el('div','note'); pmStatusLine.style.marginBottom='10px';
+    const pmResult = state.driver.pmEmailResult;
+    const pmResendBtn = document.createElement('button');
+    pmResendBtn.className='btn btn-outline';
+    if(pmResult && pmResult.ok){
+      pmStatusLine.style.color = 'var(--ok)';
+      pmStatusLine.textContent = '✓ Maintenance notification emailed to ' + escapeHtml(state.settings.notifyEmail) + '.';
+      pmResendBtn.textContent = 'Resend notification';
+    } else if(pmResult && pmResult.method==='unconfigured'){
+      pmStatusLine.style.color = 'var(--bad)';
+      pmStatusLine.textContent = 'No notification sent — set up the notify email in Admin → Settings.';
+      pmResendBtn.style.display = 'none';
+    } else {
+      pmStatusLine.style.color = 'var(--bad)';
+      pmStatusLine.textContent = '✗ Maintenance notification failed to send: ' + escapeHtml((pmResult && pmResult.error) || 'unknown error') + '.';
+      pmResendBtn.textContent = 'Retry sending';
+    }
+    card.appendChild(pmStatusLine);
+    if(pmResendBtn.style.display !== 'none'){
+      pmResendBtn.onclick = async ()=>{
+        pmResendBtn.disabled = true; pmResendBtn.textContent = 'Sending...';
+        const r = await sendPmNotification(pmBus, rec.driver, rec.mileage, rec.timestamp, pmDue);
+        state.driver.pmEmailResult = r;
+        renderDriver();
+      };
+      card.appendChild(pmResendBtn);
+    }
+  }
+
+  const newBtn = document.createElement('button');
+  newBtn.className='btn btn-gold'; newBtn.style.marginTop='18px';
+  newBtn.textContent = rec.action==='daily' ? 'Log another check' : 'Log another shift';
+  newBtn.onclick = ()=>{
+    state.driver.failedChecks=[]; state.driver.urgentCount=0; state.driver.pmDue=[]; state.driver.pmEmailResult=null;
+    formIssues=[]; formPreTrip={};
+    if(state.qrLocked){
+      const lockedBus = state.buses.find(b=>b.id===state.qrLockedBusId);
+      const lockedMode = lockedBus ? checkModeFor(categoryFor(lockedBus)) : 'shift';
+      state.driver.busId = state.qrLockedBusId;
+      if(lockedMode === 'daily'){
+        state.driver.action = 'daily';
+        state.driver.screen = 'form';
+      } else {
+        state.driver.action = null;
+        state.driver.screen = 'action';
+      }
+    } else {
+      state.driver.screen='pick'; state.driver.busId=null; state.driver.action=null;
+      window.location.hash='';
+    }
+    render();
+  };
+  card.appendChild(newBtn);
+  wrap.appendChild(card);
+}
+function bus_(id){ const b = state.buses.find(x=>x.id===id); return b ? b.id + (b.name? ' · '+b.name : '') : id; }
+
+/* ================= ADMIN MODE ================= */
+function renderAdmin(){
+  const wrap = el('div','wrap');
+  app.appendChild(wrap);
+
+  const logoutRow = el('div');
+  logoutRow.style.cssText = 'display:flex; justify-content:flex-end; margin-bottom:8px;';
+  const logoutBtn = document.createElement('button');
+  logoutBtn.className = 'btn-link'; logoutBtn.textContent = 'Log out / switch account';
+  logoutBtn.onclick = async ()=>{
+    logoutBtn.disabled = true;
+    try{ await supa.auth.signOut(); }catch(e){ console.error('sign out failed', e); }
+    state.siteUnlocked = false;
+    state.currentDepartmentKey = null;
+    state.currentDepartmentName = '';
+    state.mode = 'driver';
+    state.admin.tab = 'overview';
+    const subtitle = document.querySelector('.brand-text .t2');
+    if(subtitle) subtitle.textContent = 'Shanty Creek Equipment Logging and PM Tracking';
+    render();
+  };
+  logoutRow.appendChild(logoutBtn);
+  wrap.appendChild(logoutRow);
+
+  if(!isFullAdmin()){
+    const deptBanner = el('div','note');
+    deptBanner.style.cssText = 'background:#eaf1f9; border:1px solid var(--navy); border-radius:8px; padding:10px 14px; margin-bottom:12px; color:var(--navy); font-weight:600;';
+    deptBanner.textContent = currentDepartmentName() + ' — showing only this department\'s equipment.';
+    wrap.appendChild(deptBanner);
+  }
+
+  const allTabs = [['overview','Overview'],['buses','Equipment & QR Codes'],['types','Equipment Types'],['pm','Preventive Maintenance'],['issues','Mechanical Issues'],['log','Shift Log']];
+  if(isFullAdmin()){
+    allTabs.push(['departments','Departments']);
+    allTabs.push(['settings','Settings']);
+  }
+  allTabs.push(['account','My Account']);
+  const tabs = el('div','tabs2');
+  allTabs.forEach(([key,label])=>{
+    const b = document.createElement('button');
+    b.textContent = label;
+    if(state.admin.tab===key) b.className='active';
+    b.onclick = ()=>{ state.admin.tab=key; render(); };
+    tabs.appendChild(b);
+  });
+  wrap.appendChild(tabs);
+
+  const positionTabs = ()=>{
+    const topbarEl = document.querySelector('.topbar');
+    tabs.style.top = (topbarEl ? topbarEl.offsetHeight : 0) + 'px';
+  };
+  positionTabs();
+  if(!window._adminTabsResizeBound){
+    window.addEventListener('resize', ()=>{
+      const t = document.querySelector('.tabs2');
+      const topbarEl = document.querySelector('.topbar');
+      if(t) t.style.top = (topbarEl ? topbarEl.offsetHeight : 0) + 'px';
+      positionPinned();
+    });
+    window._adminTabsResizeBound = true;
+  }
+
+  const holder = el('div'); holder.id='admin-holder';
+  wrap.appendChild(holder);
+  holder.appendChild(el('div','empty','Loading...'));
+
+  renderAdminTab(holder);
+}
+
+async function renderAdminTab(holder){
+  const all = await loadAllShifts();
+  holder.innerHTML='';
+  if(!isFullAdmin() && (state.admin.tab==='settings' || state.admin.tab==='departments')){
+    state.admin.tab = 'overview'; // department sessions can't reach these, even if state was fiddled with
+  }
+  if(state.admin.tab==='overview') renderOverview(holder, all);
+  else if(state.admin.tab==='buses') renderBusesTab(holder);
+  else if(state.admin.tab==='types') renderEquipmentTypesTab(holder);
+  else if(state.admin.tab==='pm') renderPmTab(holder);
+  else if(state.admin.tab==='issues') renderIssuesTab(holder, all);
+  else if(state.admin.tab==='log') renderLogTab(holder, all);
+  else if(state.admin.tab==='departments' && isFullAdmin()) renderDepartmentsTab(holder);
+  else if(state.admin.tab==='settings' && isFullAdmin()) renderSettingsTab(holder);
+  else if(state.admin.tab==='account') renderAccountTab(holder);
+  // Keep "Add" and "Sort/Filter" bars pinned to the top of the screen regardless of which
+  // tab just rendered or how long its list is. Runs after layout settles (fonts/images can
+  // still shift heights right after paint), and again shortly after in case they do.
+  requestAnimationFrame(positionPinned);
+  setTimeout(positionPinned, 200);
+}
+
+// Standing rule: any "Add ___" card or sort/filter toolbar sitting above a list gets the
+// .pin-top class so it stays visible while the list under it scrolls. This computes the
+// sticky "top" offset for every .pin-top element in the current tab, stacking them in DOM
+// order just below the topbar + tab strip (both of which are sticky themselves).
+function positionPinned(){
+  const holder = document.getElementById('admin-holder');
+  if(!holder) return;
+  const topbarEl = document.querySelector('.topbar');
+  const tabsEl = document.querySelector('.tabs2');
+  let running = (topbarEl ? topbarEl.offsetHeight : 0) + (tabsEl ? tabsEl.offsetHeight : 0);
+  holder.querySelectorAll('.pin-top').forEach(pinnedEl => {
+    pinnedEl.style.top = running + 'px';
+    running += pinnedEl.offsetHeight;
+  });
+}
+
+function renderSettingsTab(holder){
+  const card = el('div','card');
+  card.innerHTML = '<div class="section-label">Failure notification email</div>';
+  const intro = el('div','note');
+  intro.style.marginBottom='14px';
+  intro.textContent = 'When a check fails or an issue is reported, an email notification is sent automatically to the address(es) below.';
+  card.appendChild(intro);
+
+  const emailField = el('div','field');
+  emailField.style.maxWidth='420px';
+  emailField.innerHTML = '<label>Send failure notifications to (comma-separated for multiple)</label>';
+  const emailInput = document.createElement('input');
+  emailInput.type='text'; emailInput.placeholder='kbigelow@shantycreek.com, manager2@shantycreek.com'; emailInput.value = state.settings.notifyEmail || '';
+  emailField.appendChild(emailInput);
+  card.appendChild(emailField);
+
+  const statusMsg = el('div','note'); statusMsg.id='email-test-status'; statusMsg.style.margin='12px 2px 0';
+  card.appendChild(statusMsg);
+
+  const btnRow = el('div');
+  btnRow.style.cssText='display:flex; gap:10px; margin-top:12px; align-items:center; flex-wrap:wrap;';
+  const saveBtn = document.createElement('button');
+  saveBtn.className='btn btn-primary'; saveBtn.style.width='auto'; saveBtn.style.padding='12px 20px';
+  saveBtn.textContent='Save';
+  function collectFields(){
+    state.settings.notifyEmail = emailInput.value.trim();
+  }
+  saveBtn.onclick = async ()=>{
+    collectFields();
+    saveBtn.textContent='Saving...';
+    const ok = await saveSettings();
+    if(ok){
+      saveBtn.textContent='Saved';
+      statusMsg.style.color='var(--ok)';
+      statusMsg.textContent = '';
+    } else {
+      saveBtn.textContent='Save failed';
+      statusMsg.style.color='var(--bad)';
+      statusMsg.textContent = '✗ Could not save. Please try again.';
+    }
+    setTimeout(()=>{ saveBtn.textContent='Save'; }, 1800);
+  };
+  btnRow.appendChild(saveBtn);
+
+  const testBtn = document.createElement('button');
+  testBtn.className='btn btn-outline'; testBtn.textContent='Send test email';
+  testBtn.onclick = async ()=>{
+    collectFields();
+    const savedOk = await saveSettings();
+    testBtn.disabled = true; testBtn.textContent = 'Sending...';
+    statusMsg.textContent = '';
+    if(!savedOk){
+      testBtn.disabled = false; testBtn.textContent = 'Send test email';
+      statusMsg.style.color = 'var(--bad)';
+      statusMsg.textContent = '✗ Could not save your changes. Please try again.';
+      return;
+    }
+    const r = await sendFailureNotification(
+      {id:'TEST', name:'Test bus'}, 'Test Driver', 12345, new Date().toISOString(),
+      [{label:'Brakes', note:'This is a test notification.'}]
+    );
+    testBtn.disabled = false;
+    testBtn.textContent = 'Send test email';
+    if(r.ok){
+      statusMsg.style.color = 'var(--ok)';
+      statusMsg.textContent = '✓ Test sent to ' + state.settings.notifyEmail + '. Check the inbox (and spam folder).';
+    } else {
+      statusMsg.style.color = 'var(--bad)';
+      statusMsg.textContent = '✗ Something went wrong sending the test email. Please try again shortly.';
+    }
+  };
+  btnRow.appendChild(testBtn);
+  card.appendChild(btnRow);
+  holder.appendChild(card);
+
+  const pmCard = el('div','card');
+  pmCard.innerHTML = '<div class="section-label">Maintenance (PM) notification email</div>';
+  const pmIntro = el('div','note');
+  pmIntro.style.marginBottom='14px';
+  pmIntro.textContent = 'Preventive maintenance due-alerts can go to a different address than check failures. Leave this blank to keep sending PM alerts to the failure notification address above.';
+  pmCard.appendChild(pmIntro);
+
+  const pmEmailField = el('div','field');
+  pmEmailField.style.maxWidth='420px';
+  pmEmailField.innerHTML = '<label>Send maintenance (PM) due notifications to (optional)</label>';
+  const pmEmailInput = document.createElement('input');
+  pmEmailInput.type='text'; pmEmailInput.placeholder='Leave blank to use the address above'; pmEmailInput.value = state.settings.pmNotifyEmail || '';
+  pmEmailField.appendChild(pmEmailInput);
+  pmCard.appendChild(pmEmailField);
+
+  const pmStatusMsg = el('div','note'); pmStatusMsg.style.margin='12px 2px 0';
+  pmCard.appendChild(pmStatusMsg);
+
+  const pmBtnRow = el('div');
+  pmBtnRow.style.cssText='display:flex; gap:10px; margin-top:12px; align-items:center; flex-wrap:wrap;';
+  const pmSaveBtn = document.createElement('button');
+  pmSaveBtn.className='btn btn-primary'; pmSaveBtn.style.width='auto'; pmSaveBtn.style.padding='12px 20px';
+  pmSaveBtn.textContent='Save';
+  pmSaveBtn.onclick = async ()=>{
+    state.settings.pmNotifyEmail = pmEmailInput.value.trim();
+    pmSaveBtn.textContent='Saving...';
+    const ok = await saveSettings();
+    if(ok){
+      pmSaveBtn.textContent='Saved';
+      pmStatusMsg.style.color='var(--ok)';
+      pmStatusMsg.textContent = '';
+    } else {
+      pmSaveBtn.textContent='Save failed';
+      pmStatusMsg.style.color='var(--bad)';
+      pmStatusMsg.textContent = '✗ Could not save. Please try again.';
+    }
+    setTimeout(()=>{ pmSaveBtn.textContent='Save'; }, 1800);
+  };
+  pmBtnRow.appendChild(pmSaveBtn);
+
+  const pmTestBtn = document.createElement('button');
+  pmTestBtn.className='btn btn-outline'; pmTestBtn.textContent='Send test PM email';
+  pmTestBtn.onclick = async ()=>{
+    state.settings.pmNotifyEmail = pmEmailInput.value.trim();
+    const savedOk = await saveSettings();
+    pmTestBtn.disabled = true; pmTestBtn.textContent = 'Sending...';
+    pmStatusMsg.textContent = '';
+    if(!savedOk){
+      pmTestBtn.disabled = false; pmTestBtn.textContent = 'Send test PM email';
+      pmStatusMsg.style.color = 'var(--bad)';
+      pmStatusMsg.textContent = '✗ Could not save your changes. Please try again.';
+      return;
+    }
+    const testBus = {id:'TEST', name:'Test bus', category:'shuttle'};
+    const r = await sendPmNotification(
+      testBus, 'Test Driver', 12345, new Date().toISOString(),
+      [{label:'Oil change', intervalValue:100, lastDoneReading:12000}]
+    );
+    pmTestBtn.disabled = false;
+    pmTestBtn.textContent = 'Send test PM email';
+    const usedAddress = (state.settings.pmNotifyEmail || state.settings.notifyEmail);
+    if(r.ok){
+      pmStatusMsg.style.color = 'var(--ok)';
+      pmStatusMsg.textContent = '✓ Test sent to ' + usedAddress + '. Check the inbox (and spam folder).';
+    } else {
+      pmStatusMsg.style.color = 'var(--bad)';
+      pmStatusMsg.textContent = '✗ Something went wrong sending the test email. Please try again shortly.';
+    }
+  };
+  pmBtnRow.appendChild(pmTestBtn);
+  pmCard.appendChild(pmBtnRow);
+  holder.appendChild(pmCard);
+}
+
+function renderAccountTab(holder){
+  const card = el('div','card');
+  card.innerHTML = '<div class="section-label">Your password</div>';
+  const intro = el('div','note');
+  intro.style.marginBottom = '12px';
+  intro.textContent = isFullAdmin()
+    ? 'Change the password for the full-admin login you\'re currently signed in with.'
+    : 'Change the password for the ' + currentDepartmentName() + ' login you\'re currently signed in with.';
+  card.appendChild(intro);
+
+  const pwField = el('div','field'); pwField.style.maxWidth='320px';
+  pwField.innerHTML = '<label>New password</label>';
+  const pwInput = document.createElement('input');
+  pwInput.type='text'; pwInput.placeholder='Leave blank to keep current password';
+  pwField.appendChild(pwInput);
+  card.appendChild(pwField);
+
+  const status = el('div','note'); status.style.margin='8px 2px 0';
+  card.appendChild(status);
+
+  const saveBtn = document.createElement('button');
+  saveBtn.className='btn btn-primary'; saveBtn.style.width='auto'; saveBtn.style.padding='11px 18px'; saveBtn.style.marginTop='10px';
+  saveBtn.textContent='Update password';
+  saveBtn.onclick = async ()=>{
+    const newPw = pwInput.value.trim();
+    if(!newPw){ status.style.color='var(--bad)'; status.textContent = 'Enter a new password first.'; return; }
+    if(newPw.length < 6){ status.style.color='var(--bad)'; status.textContent = 'Use at least 6 characters.'; return; }
+    saveBtn.textContent='Saving...';
+    const { error } = await supa.auth.updateUser({ password: newPw });
+    if(!error){
+      status.style.color='var(--ok)';
+      status.textContent = '✓ Password updated. Use the new one next time you sign in.';
+      pwInput.value = '';
+    } else {
+      status.style.color='var(--bad)';
+      status.textContent = '✗ Could not save. Details: ' + error.message;
+    }
+    saveBtn.textContent='Update password';
+  };
+  card.appendChild(saveBtn);
+  holder.appendChild(card);
+}
+
+function renderDepartmentsTab(holder){
+  const intro = el('div','note');
+  intro.style.margin = '2px 2px 14px';
+  intro.textContent = 'Departments sign in with a real account now, not a typed password. The database itself enforces that a department\'s login can only see and edit the equipment types assigned to it here — that\'s no longer just this page pretending not to show things.';
+  holder.appendChild(intro);
+
+  const addCard = el('div','card pin-top');
+  addCard.style.cssText = 'border-style:dashed; background:var(--cream); box-shadow:none;';
+  addCard.innerHTML = '<div class="section-label">Add a new department</div>';
+  const addRow = el('div');
+  addRow.style.cssText = 'display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;';
+  addRow.innerHTML = `
+    <div class="field" style="flex:1; min-width:180px; margin-bottom:0;"><label>Department name</label><input type="text" id="new-dept-name" placeholder="e.g. Building Maintenance"></div>
+  `;
+  const addBtn = document.createElement('button');
+  addBtn.className='btn btn-primary'; addBtn.style.width='auto'; addBtn.style.padding='12px 20px'; addBtn.textContent='Add department';
+  addBtn.onclick = async ()=>{
+    const nameInput = document.getElementById('new-dept-name');
+    const name = nameInput.value.trim();
+    if(!name){ alert('Enter a department name.'); return; }
+    state.departments.push({ key: uid('dept'), name });
+    const ok = await saveDepartments();
+    if(!ok){
+      state.departments.pop();
+      alert('Could not save.' + (lastStorageError?'\n\nDetails: '+lastStorageError:''));
+      return;
+    }
+    renderAdminTab(holder);
+  };
+  addRow.appendChild(addBtn);
+  addCard.appendChild(addRow);
+  holder.appendChild(addCard);
+
+  state.departments.forEach((dept, idx) => {
+    const card = el('div','card');
+    const head = el('div','flex-between');
+    const nameInput = document.createElement('input');
+    nameInput.type='text'; nameInput.value=dept.name;
+    nameInput.style.cssText = "font-family:'Barlow Condensed'; font-size:20px; font-weight:700; color:var(--navy); border:none; background:transparent; padding:2px 0; width:220px;";
+    nameInput.oninput = ()=> { dept.name = nameInput.value; if(dept.linkedUserId) linkedNote.textContent = 'Linked to a Supabase Auth account. Re-save below if you just renamed this department.'; };
+    head.appendChild(nameInput);
+    const delBtn = document.createElement('button');
+    delBtn.className='btn btn-outline btn-sm'; delBtn.textContent='Delete department';
+    delBtn.onclick = async ()=>{
+      if(!confirm('Delete "' + dept.name + '"? Its equipment types will stay but won\'t belong to any department until reassigned. This does not delete its Supabase Auth login — remove that separately in the Supabase dashboard if you want to fully retire it.')) return;
+      state.departments = state.departments.filter(d=>d.key!==dept.key);
+      const ok = await saveDepartments();
+      if(!ok){ alert('Could not save.' + (lastStorageError?'\n\nDetails: '+lastStorageError:'')); return; }
+      renderAdminTab(holder);
+    };
+    head.appendChild(delBtn);
+    card.appendChild(head);
+
+    card.appendChild(el('div','section-label','Sign-in account'));
+    const acctNote = el('div','note');
+    acctNote.style.marginBottom = '8px';
+    acctNote.innerHTML = 'Create this department\'s login once in the <strong>Supabase dashboard → Authentication → Users → Add user</strong> (an email + password), then paste that user\'s ID below to link it. Full steps are in the setup guide.';
+    card.appendChild(acctNote);
+
+    const linkField = el('div','field'); linkField.style.maxWidth='420px';
+    linkField.innerHTML = '<label>Supabase Auth user ID</label>';
+    const linkInput = document.createElement('input');
+    linkInput.type='text'; linkInput.placeholder='e.g. 3fa85f64-5717-4562-b3fc-2c963f66afa6';
+    linkInput.value = dept.linkedUserId || '';
+    linkField.appendChild(linkInput);
+    card.appendChild(linkField);
+
+    const linkedNote = el('div','note'); linkedNote.style.margin = '6px 2px 0';
+    linkedNote.style.color = dept.linkedUserId ? 'var(--ok)' : 'var(--ink-soft)';
+    linkedNote.textContent = dept.linkedUserId ? '✓ Linked — this account can sign in as ' + dept.name + '.' : 'Not linked yet — this department has no working login.';
+    card.appendChild(linkedNote);
+
+    const linkBtn = document.createElement('button');
+    linkBtn.className='btn btn-outline btn-sm'; linkBtn.style.marginTop='8px'; linkBtn.textContent='Save & link account';
+    linkBtn.onclick = async ()=>{
+      const uid = linkInput.value.trim();
+      if(!uid){ alert('Paste the Supabase Auth user ID first.'); return; }
+      linkBtn.disabled = true; linkBtn.textContent='Linking...';
+      const { error } = await supa.from('profiles').upsert({
+        id: uid, department_key: dept.key, department_name: dept.name, is_full_admin: false
+      });
+      if(error){
+        alert('Could not link that account. Double check the user ID was copied exactly.\n\nDetails: ' + error.message);
+        linkBtn.disabled = false; linkBtn.textContent='Save & link account';
+        return;
+      }
+      dept.linkedUserId = uid;
+      await saveDepartments();
+      linkBtn.disabled = false; linkBtn.textContent='Save & link account';
+      renderAdminTab(holder);
+    };
+    card.appendChild(linkBtn);
+
+    card.appendChild(el('div','section-label','Equipment types this department can see'));
+    const typesWrap = el('div');
+    typesWrap.style.cssText = 'display:flex; flex-wrap:wrap; gap:8px; margin-bottom:10px;';
+    state.categories.forEach(cat => {
+      const belongsHere = cat.department === dept.key;
+      const belongsElsewhere = cat.department && cat.department !== dept.key;
+      const otherDept = belongsElsewhere ? state.departments.find(d=>d.key===cat.department) : null;
+      const chip = document.createElement('label');
+      chip.style.cssText = 'display:flex; align-items:center; gap:6px; border:1.5px solid ' + (belongsHere?'var(--navy)':'var(--line)') + '; border-radius:999px; padding:6px 12px; font-size:12.5px; cursor:pointer;' + (belongsElsewhere ? ' opacity:.5;' : '');
+      const cb = document.createElement('input');
+      cb.type='checkbox'; cb.checked = belongsHere; cb.disabled = !!belongsElsewhere;
+      cb.style.cssText = 'width:15px; height:15px; accent-color:var(--navy);';
+      cb.onchange = async ()=>{
+        cat.department = cb.checked ? dept.key : null;
+        const ok = await saveCategories();
+        if(!ok){ alert('Could not save.' + (lastStorageError?'\n\nDetails: '+lastStorageError:'')); return; }
+        renderAdminTab(holder);
+      };
+      chip.appendChild(cb);
+      chip.appendChild(document.createTextNode(cat.label + (belongsElsewhere ? ' (in ' + (otherDept?otherDept.name:'another dept') + ')' : '')));
+      typesWrap.appendChild(chip);
+    });
+    card.appendChild(typesWrap);
+
+    const saveBtn = document.createElement('button');
+    saveBtn.className='btn btn-primary'; saveBtn.style.width='auto'; saveBtn.style.padding='11px 18px';
+    saveBtn.textContent='Save changes';
+    saveBtn.onclick = async ()=>{
+      saveBtn.textContent='Saving...';
+      const ok = await saveDepartments();
+      saveBtn.textContent = ok ? 'Saved' : 'Save failed';
+      if(!ok) alert('Could not save.' + (lastStorageError?'\n\nDetails: '+lastStorageError:''));
+      setTimeout(()=>{ saveBtn.textContent='Save changes'; }, 1500);
+    };
+    card.appendChild(saveBtn);
+
+    holder.appendChild(card);
+  });
+}
+
+function renderOverview(holder, allShifts){
+  const myBuses = busesForCurrentUser();
+  const myBusIds = new Set(myBuses.map(b=>b.id));
+  const all = allShifts.filter(s => myBusIds.has(s.busId));
+
+  const openIssues = [];
+  all.forEach(s=>{
+    if(s.issuesResolved) return;
+    const cat = categoryFor(myBuses.find(b=>b.id===s.busId) || {id:s.busId});
+    allFlaggedItems(s, cat).forEach(item => openIssues.push({rec:s, item}));
+  });
+  const urgentCount = openIssues.filter(o=>o.item.severity==='urgent').length;
+
+  const stats = el('div','stat-grid');
+  stats.appendChild(statCard(myBuses.length,'Equipment tracked'));
+  stats.appendChild(statCard(all.length,'Logs total'));
+  const oi = statCard(openIssues.length,'Open issues'); if(urgentCount) oi.classList.add('alert');
+  stats.appendChild(oi);
+  const ui = statCard(urgentCount,'Urgent · out of service'); if(urgentCount) ui.classList.add('alert');
+  stats.appendChild(ui);
+  holder.appendChild(stats);
+
+  const card = el('div','card');
+  card.innerHTML = '<div class="section-label">Current status by equipment</div>';
+  if(!myBuses.length){
+    card.appendChild(el('div','empty','No equipment added yet — go to "Equipment & QR Codes" to add your fleet.'));
+  } else {
+    const table = document.createElement('table');
+    table.innerHTML = '<thead><tr><th>ID</th><th>Name</th><th>Type</th><th>Location</th><th>Last reading</th><th>Last shift</th><th>Status</th></tr></thead>';
+    const tbody = document.createElement('tbody');
+    const sortedBuses = myBuses.slice().sort((a,b)=> locationForBus(a).localeCompare(locationForBus(b)) || a.id.localeCompare(b.id, undefined, {numeric:true}));
+    sortedBuses.forEach(b=>{
+      const arr = state.shiftsCache[b.id] || [];
+      const sorted = [...arr].sort((a,x)=> new Date(x.timestamp)-new Date(a.timestamp));
+      const last = sorted[0];
+      const cat = categoryFor(b);
+      const hasUrgent = arr.some(s => !s.issuesResolved && recordHasUrgent(s, cat));
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td><strong>${escapeHtml(b.id)}</strong></td><td>${escapeHtml(b.name||'—')}</td><td>${escapeHtml(cat.label)}</td><td>${escapeHtml(locationForBus(b))}</td>` +
+        `<td class="mono">${last && last.mileage!=null ? last.mileage.toLocaleString()+' '+unitLabel(cat.trackingUnit) : '—'}</td>` +
+        `<td>${last? escapeHtml(last.driver)+' · '+fmtDT(last.timestamp) : '—'}</td>` +
+        `<td>${hasUrgent? '<span class="tag open">Out of service</span>' : '<span class="tag resolved">In service</span>'}</td>`;
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    const scrollWrap = el('div','table-scroll');
+    scrollWrap.appendChild(table);
+    card.appendChild(scrollWrap);
+  }
+  holder.appendChild(card);
+}
+function statCard(num,label){
+  const s = el('div','stat');
+  s.innerHTML = `<div class="num">${num}</div><div class="lab">${label}</div>`;
+  return s;
+}
+
+function printQrLabel(bus, cat){
+  const qrLabel = checkModeFor(cat)==='shift' ? 'Scan for Start / End of Shift' : 'Scan to log a check';
+  const win = window.open('', '_blank', 'width=420,height=560');
+  if(!win){ alert('Your browser blocked the print window — allow pop-ups for this site and try again.'); return; }
+  win.document.write(`
+    <!DOCTYPE html><html><head><meta charset="UTF-8"><title>${escapeHtml(bus.id)} QR</title>
+    <style>
+      body{font-family:system-ui,sans-serif; text-align:center; padding:30px 20px; margin:0;}
+      .id{font-size:34px; font-weight:800; letter-spacing:.02em; margin-bottom:4px;}
+      .name{font-size:16px; color:#444; margin-bottom:2px;}
+      .type{font-size:12px; color:#777; text-transform:uppercase; letter-spacing:.08em; margin-bottom:20px;}
+      img{width:280px; height:280px;}
+      .label{font-size:14px; font-weight:600; margin-top:16px;}
+      .brand{font-size:11px; color:#999; margin-top:26px; text-transform:uppercase; letter-spacing:.08em;}
+    </style></head>
+    <body>
+      <div class="id">${escapeHtml(bus.id)}</div>
+      <div class="name">${escapeHtml(bus.name||'')}</div>
+      <div class="type">${escapeHtml(cat.label)}</div>
+      <img src="${qrUrl(selfUrlFor(bus.id), '400x400')}" alt="QR code">
+      <div class="label">${escapeHtml(qrLabel)}</div>
+      <div class="brand">Shanty Creek Resorts · The Kingdom</div>
+    </body></html>
+  `);
+  win.document.close();
+  win.onload = () => { win.focus(); win.print(); };
+}
+function printAllQrLabels(buses){
+  const win = window.open('', '_blank');
+  if(!win){ alert('Your browser blocked the print window — allow pop-ups for this site and try again.'); return; }
+  const labels = buses.map(b => {
+    const cat = categoryFor(b);
+    const qrLabel = checkModeFor(cat)==='shift' ? 'Scan for Start / End of Shift' : 'Scan to log a check';
+    return `
+      <div class="label">
+        <div class="id">${escapeHtml(b.id)}</div>
+        <div class="name">${escapeHtml(b.name||'')}</div>
+        <div class="type">${escapeHtml(cat.label)}</div>
+        <img src="${qrUrl(selfUrlFor(b.id), '300x300')}" alt="QR code">
+        <div class="sub">${escapeHtml(qrLabel)}</div>
+      </div>`;
+  }).join('');
+  win.document.write(`
+    <!DOCTYPE html><html><head><meta charset="UTF-8"><title>Equipment QR Codes</title>
+    <style>
+      body{font-family:system-ui,sans-serif; margin:0; padding:20px;}
+      .grid{display:flex; flex-wrap:wrap; gap:0;}
+      .label{width:33.33%; box-sizing:border-box; text-align:center; padding:20px 10px; page-break-inside:avoid; border:1px dashed #ccc;}
+      .id{font-size:22px; font-weight:800; margin-bottom:2px;}
+      .name{font-size:12px; color:#444;}
+      .type{font-size:10px; color:#888; text-transform:uppercase; letter-spacing:.06em; margin-bottom:10px;}
+      img{width:170px; height:170px;}
+      .sub{font-size:11px; font-weight:600; margin-top:8px;}
+      @media print{ .label{border:1px solid #ddd;} }
+    </style></head>
+    <body><div class="grid">${labels}</div></body></html>
+  `);
+  win.document.close();
+  win.onload = () => { win.focus(); win.print(); };
+}
+
+/* ---------- bulk equipment upload ---------- */
+let pendingImportRows = null;
+let selectedBusIds = new Set();
+
+function parseCsv(text){
+  const rows = [];
+  let row = [], field = '', inQuotes = false;
+  for(let i=0;i<text.length;i++){
+    const c = text[i];
+    if(inQuotes){
+      if(c === '"'){
+        if(text[i+1] === '"'){ field+='"'; i++; } else { inQuotes = false; }
+      } else field += c;
+    } else {
+      if(c === '"') inQuotes = true;
+      else if(c === ','){ row.push(field); field=''; }
+      else if(c === '\n' || c === '\r'){
+        if(c === '\r' && text[i+1] === '\n') i++;
+        row.push(field); field='';
+        if(row.length>1 || row[0]!=='') rows.push(row);
+        row = [];
+      } else field += c;
+    }
+  }
+  if(field.length || row.length){ row.push(field); rows.push(row); }
+  return rows;
+}
+function resolveCategoryByLabelOrKey(raw){
+  if(!raw) return null;
+  const r = raw.trim().toLowerCase();
+  return categoriesForCurrentUser().find(c => c.key.toLowerCase()===r || c.label.toLowerCase()===r) || null;
+}
+function downloadCsvTemplate(){
+  const sampleCat = categoriesForCurrentUser()[0];
+  const rows = [
+    ['ID','Name','Type','Location (optional)'],
+    ['SH-9', 'Example shuttle', sampleCat ? sampleCat.label : 'Shuttle Bus', '']
+  ];
+  const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const blob = new Blob([csv], {type:'text/csv'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'equipment-upload-template.csv'; a.click();
+  URL.revokeObjectURL(url);
+}
+function renderImportPreview(container, holder){
+  container.innerHTML = '';
+  if(!pendingImportRows || !pendingImportRows.length) return;
+
+  const okRows = pendingImportRows.filter(r=>r.status==='ok');
+  const errRows = pendingImportRows.filter(r=>r.status!=='ok');
+
+  const table = document.createElement('table');
+  table.innerHTML = '<thead><tr><th>ID</th><th>Name</th><th>Type</th><th>Location</th><th>Status</th></tr></thead>';
+  const tbody = document.createElement('tbody');
+  pendingImportRows.forEach(r=>{
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td><strong>${escapeHtml(r.id||'—')}</strong></td>
+      <td>${escapeHtml(r.name||'—')}</td>
+      <td>${r.category ? escapeHtml(r.category.label) : escapeHtml(r.typeRaw||'—')}</td>
+      <td>${r.location ? escapeHtml(r.location) : '<span class="note">auto</span>'}</td>
+      <td>${r.status==='ok' ? '<span class="tag resolved">Will add</span>' : '<span class="tag open">'+escapeHtml(r.reason)+'</span>'}</td>`;
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  const scrollWrap = el('div','table-scroll');
+  scrollWrap.appendChild(table);
+  container.appendChild(scrollWrap);
+
+  const summary = el('div','note');
+  summary.style.margin = '10px 2px';
+  summary.textContent = okRows.length + ' will be added' + (errRows.length ? ', ' + errRows.length + ' skipped (fix and re-upload if needed)' : '') + '.';
+  container.appendChild(summary);
+
+  const btnRow = el('div');
+  btnRow.style.cssText = 'display:flex; gap:10px; flex-wrap:wrap;';
+  const confirmBtn = document.createElement('button');
+  confirmBtn.className='btn btn-gold'; confirmBtn.style.width='auto'; confirmBtn.style.padding='12px 20px';
+  confirmBtn.textContent = 'Import ' + okRows.length + ' equipment';
+  confirmBtn.disabled = okRows.length === 0;
+  confirmBtn.onclick = async ()=>{
+    confirmBtn.disabled = true; confirmBtn.textContent = 'Importing...';
+    const prevBuses = state.buses;
+    state.buses = state.buses.concat(okRows.map(r => {
+      const bus = { id:r.id, name:r.name, category:r.category.key };
+      if(r.location) bus.location = r.location;
+      return bus;
+    }));
+    const ok = await saveBuses();
+    if(!ok){
+      state.buses = prevBuses;
+      alert('Could not save these units.' + (lastStorageError ? '\n\nDetails: ' + lastStorageError : ''));
+      confirmBtn.disabled = false; confirmBtn.textContent = 'Import ' + okRows.length + ' equipment';
+      return;
+    }
+    pendingImportRows = null;
+    renderAdminTab(holder);
+  };
+  btnRow.appendChild(confirmBtn);
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className='btn btn-outline'; cancelBtn.textContent='Cancel';
+  cancelBtn.onclick = ()=>{ pendingImportRows = null; renderAdminTab(holder); };
+  btnRow.appendChild(cancelBtn);
+  container.appendChild(btnRow);
+}
+
+function renderBusesTab(holder){
+  const addCard = el('div','card pin-top');
+  addCard.innerHTML = '<div class="section-label">Add equipment</div>';
+  const row = el('div');
+  row.style.display='flex'; row.style.gap='10px'; row.style.flexWrap='wrap'; row.style.alignItems='flex-end';
+  row.innerHTML = `
+    <div class="field" style="min-width:100px; margin-bottom:0;"><label>ID</label><input type="text" id="new-bus-id" placeholder="e.g. SH-3"></div>
+    <div class="field" style="flex:1; min-width:160px; margin-bottom:0;"><label>Name</label><input type="text" id="new-bus-name" placeholder="e.g. Cedar River shuttle"></div>
+  `;
+  const myCats = categoriesForCurrentUser();
+  const catField = el('div','field'); catField.style.minWidth='170px'; catField.style.marginBottom='0';
+  catField.innerHTML = '<label>Type</label>';
+  const catSelect = document.createElement('select'); catSelect.id='new-bus-cat';
+  myCats.forEach(c => { const o=document.createElement('option'); o.value=c.key; o.textContent=c.label; catSelect.appendChild(o); });
+  catField.appendChild(catSelect);
+  row.appendChild(catField);
+
+  const locField = el('div','field'); locField.style.minWidth='170px'; locField.style.marginBottom='0';
+  locField.innerHTML = '<label>Location</label>';
+  const locSelect = document.createElement('select'); locSelect.id='new-bus-loc';
+  const autoOpt = document.createElement('option'); autoOpt.value=''; autoOpt.textContent='Auto (from ID)';
+  locSelect.appendChild(autoOpt);
+  LOCATIONS.forEach(l => { const o=document.createElement('option'); o.value=l; o.textContent=l; locSelect.appendChild(o); });
+  locField.appendChild(locSelect);
+  row.appendChild(locField);
+
+  const addBtn = document.createElement('button');
+  addBtn.className='btn btn-primary'; addBtn.style.width='auto'; addBtn.style.padding='12px 20px'; addBtn.textContent='Add equipment';
+  addBtn.onclick = async ()=>{
+    const idInput = document.getElementById('new-bus-id');
+    const nameInput = document.getElementById('new-bus-name');
+    const id = idInput.value.trim();
+    if(!id){ alert('Enter an ID.'); return; }
+    if(state.buses.some(b=>b.id===id)){ alert('That ID already exists.'); return; }
+    addBtn.disabled = true; addBtn.textContent = 'Saving...';
+    const newBus = {id, name: nameInput.value.trim(), category: catSelect.value};
+    if(locSelect.value) newBus.location = locSelect.value;
+    state.buses.push(newBus);
+    const ok = await saveBuses();
+    if(!ok){
+      state.buses = state.buses.filter(b=>b.id!==id); // roll back, it didn't actually persist
+      addBtn.disabled = false; addBtn.textContent = 'Add equipment';
+      alert('Could not save this unit.' + (lastStorageError ? '\n\nDetails: ' + lastStorageError : ''));
+      return;
+    }
+    renderAdminTab(holder);
+  };
+  row.appendChild(addBtn);
+  addCard.appendChild(row);
+  if(!myCats.length){
+    addCard.appendChild(el('div','note', isFullAdmin() ? 'No equipment types yet — set some up in Admin → Equipment Types first.' : 'No equipment types are assigned to your department yet — ask an admin to assign one in Equipment Types.'));
+  }
+  holder.appendChild(addCard);
+
+  const uploadCard = el('div','card');
+  uploadCard.innerHTML = '<div class="section-label">Or upload a CSV</div>';
+  const uploadDesc = el('div','note');
+  uploadDesc.style.marginBottom = '12px';
+  uploadDesc.textContent = 'Three columns: ID, Name, Type. Type must match one of your equipment type names exactly (not case-sensitive) — download the template to get the current list right.';
+  uploadCard.appendChild(uploadDesc);
+
+  const uploadRow = el('div');
+  uploadRow.style.cssText = 'display:flex; gap:10px; flex-wrap:wrap; align-items:center;';
+  const templateBtn = document.createElement('button');
+  templateBtn.className='btn btn-outline btn-sm'; templateBtn.textContent='Download CSV template';
+  templateBtn.onclick = downloadCsvTemplate;
+  uploadRow.appendChild(templateBtn);
+
+  const fileInput = document.createElement('input');
+  fileInput.type = 'file'; fileInput.accept = '.csv,text/csv';
+  fileInput.id = 'csv-upload-input';
+  uploadRow.appendChild(fileInput);
+  uploadCard.appendChild(uploadRow);
+
+  const previewContainer = el('div');
+  previewContainer.style.marginTop = '14px';
+  uploadCard.appendChild(previewContainer);
+
+  fileInput.onchange = (e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev)=>{
+      const rows = parseCsv(String(ev.target.result));
+      if(!rows.length){ alert('That file looks empty.'); return; }
+      let dataRows = rows;
+      const first = rows[0].map(x=>String(x).trim().toLowerCase());
+      if(first[0]==='id') dataRows = rows.slice(1);
+
+      const seenIds = new Set(state.buses.map(b=>b.id));
+      const seenInFile = new Set();
+      pendingImportRows = dataRows.filter(r=>r.some(c=>String(c).trim()!=='')).map(r=>{
+        const id = String(r[0]||'').trim();
+        const name = String(r[1]||'').trim();
+        const typeRaw = String(r[2]||'').trim();
+        const locRaw = String(r[3]||'').trim();
+        const cat = resolveCategoryByLabelOrKey(typeRaw);
+        const location = locRaw && LOCATIONS.includes(locRaw) ? locRaw : null;
+        let status='ok', reason='';
+        if(!id){ status='error'; reason='Missing ID'; }
+        else if(seenIds.has(id)){ status='error'; reason='ID already exists'; }
+        else if(seenInFile.has(id)){ status='error'; reason='Duplicate in file'; }
+        else if(!cat){ status='error'; reason='Unknown type "'+typeRaw+'"'; }
+        else if(locRaw && !location){ status='error'; reason='Unknown location "'+locRaw+'"'; }
+        if(id) seenInFile.add(id);
+        return {id, name, typeRaw, category:cat, location, status, reason};
+      });
+      renderImportPreview(previewContainer, holder);
+    };
+    reader.readAsText(file);
+  };
+
+  if(pendingImportRows) renderImportPreview(previewContainer, holder);
+  holder.appendChild(uploadCard);
+
+  if(!busesForCurrentUser().length){
+    holder.appendChild(el('div','empty','No equipment yet — add your first unit above.'));
+    return;
+  }
+
+  const filterVal = state.admin.busTypeFilter || 'all';
+  const locationVal = state.admin.busLocationFilter || 'all';
+  const sortVal = state.admin.busSort || 'id';
+
+  let visibleBuses = busesForCurrentUser().filter(b => {
+    const typeOk = filterVal==='all' || (b.category||'shuttle')===filterVal;
+    const locOk = locationVal==='all' || locationForBus(b)===locationVal;
+    return typeOk && locOk;
+  });
+  visibleBuses = visibleBuses.slice().sort((a,b)=>{
+    if(sortVal==='type') return categoryFor(a).label.localeCompare(categoryFor(b).label) || a.id.localeCompare(b.id);
+    if(sortVal==='location') return locationForBus(a).localeCompare(locationForBus(b)) || a.id.localeCompare(b.id);
+    return a.id.localeCompare(b.id, undefined, {numeric:true});
+  });
+
+  const toolbar = el('div','toolbar pin-top');
+  const filterSel = document.createElement('select');
+  filterSel.innerHTML = '<option value="all">All types</option>' + myCats.map(c=>`<option value="${escapeHtml(c.key)}">${escapeHtml(c.label)}</option>`).join('');
+  filterSel.value = filterVal;
+  filterSel.onchange = ()=>{ state.admin.busTypeFilter = filterSel.value; renderAdminTab(holder); };
+  toolbar.appendChild(document.createTextNode('Type: '));
+  toolbar.appendChild(filterSel);
+
+  const locSel = document.createElement('select');
+  locSel.innerHTML = '<option value="all">All locations</option>' + LOCATIONS.map(l=>`<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('');
+  locSel.value = locationVal;
+  locSel.onchange = ()=>{ state.admin.busLocationFilter = locSel.value; renderAdminTab(holder); };
+  toolbar.appendChild(document.createTextNode('Location: '));
+  toolbar.appendChild(locSel);
+
+  const sortSel = document.createElement('select');
+  sortSel.innerHTML = '<option value="id">Sort: ID</option><option value="type">Sort: Type</option><option value="location">Sort: Location</option>';
+  sortSel.value = sortVal;
+  sortSel.onchange = ()=>{ state.admin.busSort = sortSel.value; renderAdminTab(holder); };
+  toolbar.appendChild(sortSel);
+
+  const printAllBtn = document.createElement('button');
+  printAllBtn.className='btn btn-outline btn-sm';
+  printAllBtn.textContent = 'Print all ' + visibleBuses.length + ' QR code' + (visibleBuses.length===1?'':'s');
+  printAllBtn.onclick = ()=> printAllQrLabels(visibleBuses);
+  toolbar.appendChild(printAllBtn);
+  holder.appendChild(toolbar);
+
+  // Bulk selection toolbar
+  const visibleIds = visibleBuses.map(b=>b.id);
+  const selectedVisibleCount = visibleIds.filter(id=>selectedBusIds.has(id)).length;
+  const bulkBar = el('div','toolbar');
+  bulkBar.style.marginTop = '-6px';
+  const selectAllLabel = document.createElement('label');
+  selectAllLabel.style.cssText = 'display:flex; align-items:center; gap:7px; font-size:13px; font-weight:600; color:var(--ink-soft); cursor:pointer;';
+  const selectAllCb = document.createElement('input');
+  selectAllCb.type = 'checkbox';
+  selectAllCb.style.cssText = 'width:18px; height:18px; accent-color:var(--navy);';
+  selectAllCb.checked = visibleIds.length>0 && selectedVisibleCount===visibleIds.length;
+  selectAllCb.indeterminate = selectedVisibleCount>0 && selectedVisibleCount<visibleIds.length;
+  selectAllCb.onchange = ()=>{
+    if(selectAllCb.checked){ visibleIds.forEach(id=>selectedBusIds.add(id)); }
+    else { visibleIds.forEach(id=>selectedBusIds.delete(id)); }
+    renderAdminTab(holder);
+  };
+  selectAllLabel.appendChild(selectAllCb);
+  selectAllLabel.appendChild(document.createTextNode('Select all shown (' + visibleIds.length + ')'));
+  bulkBar.appendChild(selectAllLabel);
+
+  if(selectedVisibleCount > 0){
+    const delSelBtn = document.createElement('button');
+    delSelBtn.className='btn btn-outline btn-sm';
+    delSelBtn.style.color = 'var(--bad)'; delSelBtn.style.borderColor = 'var(--bad)';
+    delSelBtn.textContent = 'Delete ' + selectedVisibleCount + ' selected';
+    delSelBtn.onclick = async ()=>{
+      if(!confirm('Remove ' + selectedVisibleCount + ' selected unit(s)? Their shift history stays in storage but they will no longer show in the picker.')) return;
+      delSelBtn.disabled = true; delSelBtn.textContent = 'Removing...';
+      const prevBuses = state.buses;
+      state.buses = state.buses.filter(x=>!selectedBusIds.has(x.id));
+      const ok = await saveBuses();
+      if(!ok){
+        state.buses = prevBuses;
+        alert('Could not save this change.' + (lastStorageError ? '\n\nDetails: ' + lastStorageError : ''));
+        delSelBtn.disabled = false; delSelBtn.textContent = 'Delete ' + selectedVisibleCount + ' selected';
+        return;
+      }
+      selectedBusIds.clear();
+      renderAdminTab(holder);
+    };
+    bulkBar.appendChild(delSelBtn);
+
+    const clearSelBtn = document.createElement('button');
+    clearSelBtn.className='btn-link'; clearSelBtn.textContent='Clear selection';
+    clearSelBtn.onclick = ()=>{ selectedBusIds.clear(); renderAdminTab(holder); };
+    bulkBar.appendChild(clearSelBtn);
+  }
+  holder.appendChild(bulkBar);
+
+  const note = el('div','note');
+  note.style.margin = '10px 2px 14px';
+  note.textContent = 'Print each QR code and post it on the equipment. Scanning it opens this app straight into that unit\'s form. Note: for QR codes to work from drivers\' phones, this page needs a permanent link — publish this artifact (Share) or host the file, then reload this tab so the QR codes point to that address.';
+  holder.appendChild(note);
+
+  visibleBuses.forEach(b=>{
+    const cat = categoryFor(b);
+    const loc = locationForBus(b);
+    const card = el('div','bus-card');
+    const selWrap = el('div');
+    selWrap.style.cssText = 'display:flex; align-items:flex-start; padding-top:2px;';
+    const selCb = document.createElement('input');
+    selCb.type = 'checkbox';
+    selCb.style.cssText = 'width:18px; height:18px; accent-color:var(--navy);';
+    selCb.checked = selectedBusIds.has(b.id);
+    selCb.onchange = ()=>{
+      if(selCb.checked) selectedBusIds.add(b.id); else selectedBusIds.delete(b.id);
+      renderAdminTab(holder);
+    };
+    selWrap.appendChild(selCb);
+    card.appendChild(selWrap);
+    const info = el('div','info');
+    info.innerHTML = `<div class="bus-id" style="font-family:'Barlow Condensed'; font-size:22px; font-weight:700; color:var(--navy);">${escapeHtml(b.id)}</div>
+      <div class="bus-name" style="color:var(--ink-soft);">${escapeHtml(b.name||'')}</div>
+      <div class="bus-name" style="color:var(--ink-soft); margin-bottom:10px; font-size:11.5px; text-transform:uppercase; letter-spacing:.05em;">${escapeHtml(cat.label)} · ${escapeHtml(loc)}</div>`;
+    const rm = document.createElement('button');
+    rm.className='btn btn-outline btn-sm'; rm.textContent='Remove';
+    rm.onclick = async ()=>{
+      if(!confirm('Remove ' + b.id + '? Its shift history stays in storage but will no longer show in the picker.')) return;
+      const prevBuses = state.buses;
+      state.buses = state.buses.filter(x=>x.id!==b.id);
+      const ok = await saveBuses();
+      if(!ok){
+        state.buses = prevBuses;
+        alert('Could not save this change.' + (lastStorageError ? '\n\nDetails: ' + lastStorageError : ''));
+        return;
+      }
+      selectedBusIds.delete(b.id);
+      renderAdminTab(holder);
+    };
+    info.appendChild(rm);
+    card.appendChild(info);
+
+    const qrs = el('div','qrs');
+    const qrLabel = checkModeFor(cat)==='shift' ? 'Scan for Start / End of Shift' : 'Scan to log a check';
+    const box = el('div','qr-box');
+    const img = document.createElement('img');
+    img.src = qrUrl(selfUrlFor(b.id));
+    img.width=140; img.height=140; img.alt=qrLabel+' QR';
+    box.appendChild(img);
+    box.appendChild(document.createTextNode(qrLabel));
+    const printBtn = document.createElement('button');
+    printBtn.className='btn btn-outline btn-sm';
+    printBtn.textContent='Print';
+    printBtn.style.display='block';
+    printBtn.style.margin='8px auto 0';
+    printBtn.onclick = ()=> printQrLabel(b, cat);
+    box.appendChild(printBtn);
+    qrs.appendChild(box);
+    card.appendChild(qrs);
+    holder.appendChild(card);
+  });
+}
+
+function renderEquipmentTypesTab(holder){
+  const intro = el('div','note');
+  intro.style.margin = '2px 2px 14px';
+  intro.textContent = 'Each equipment type has its own pre-trip checklist and its own tracking unit (miles or hours). Add a new type for anything not listed yet — turf mowers, sprayers, groomers, UTVs, trucks, whatever you run.';
+  holder.appendChild(intro);
+
+  const addCatCard = el('div','card pin-top');
+  addCatCard.style.cssText = 'border-style:dashed; background:var(--cream); box-shadow:none;';
+  addCatCard.innerHTML = '<div class="section-label">Add a new equipment type</div>';
+  const addRow = el('div');
+  addRow.style.cssText = 'display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;';
+  addRow.innerHTML = `
+    <div class="field" style="flex:1; min-width:180px; margin-bottom:0;"><label>Type name</label><input type="text" id="new-cat-label" placeholder="e.g. Utility Cart"></div>
+  `;
+  const trackField = el('div','field'); trackField.style.minWidth='150px'; trackField.style.marginBottom='0';
+  trackField.innerHTML = '<label>Tracking</label>';
+  const trackSel = document.createElement('select'); trackSel.id='new-cat-track';
+  trackSel.innerHTML = '<option value="hours">Hours</option><option value="miles">Miles</option><option value="none">Not tracked</option>';
+  trackField.appendChild(trackSel);
+  addRow.appendChild(trackField);
+  const modeField = el('div','field'); modeField.style.minWidth='190px'; modeField.style.marginBottom='0';
+  modeField.innerHTML = '<label>Workflow</label>';
+  const modeSelNew = document.createElement('select'); modeSelNew.id='new-cat-mode';
+  modeSelNew.innerHTML = '<option value="daily">Single daily / use check</option><option value="shift">Start / End shift</option>';
+  modeField.appendChild(modeSelNew);
+  addRow.appendChild(modeField);
+  const addCatBtn = document.createElement('button');
+  addCatBtn.className='btn btn-primary'; addCatBtn.style.width='auto'; addCatBtn.style.padding='12px 20px'; addCatBtn.textContent='Add type';
+  addCatBtn.onclick = async ()=>{
+    const labelInput = document.getElementById('new-cat-label');
+    const label = labelInput.value.trim();
+    if(!label){ alert('Enter a name for the type.'); return; }
+    const key = uid('cat');
+    const newCat = { key, label, trackingUnit: trackSel.value, checkMode: modeSelNew.value, checklist: [
+      {key:'fluids', label:'Fluid levels'},
+      {key:'general', label:'General condition'}
+    ]};
+    if(!isFullAdmin()) newCat.department = state.currentDepartmentKey; // auto-scope to whoever created it
+    state.categories.push(newCat);
+    const ok = await saveCategories();
+    if(!ok){
+      state.categories.pop();
+      alert('Could not save.' + (lastStorageError?'\n\nDetails: '+lastStorageError:''));
+      return;
+    }
+    renderAdminTab(holder);
+  };
+  addRow.appendChild(addCatBtn);
+  addCatCard.appendChild(addRow);
+  holder.appendChild(addCatCard);
+
+  categoriesForCurrentUser().forEach((cat, catIdx) => {
+    const card = el('div','card');
+    const head = el('div','flex-between');
+    const titleWrap = el('div');
+    const nameInput = document.createElement('input');
+    nameInput.type='text'; nameInput.value=cat.label;
+    nameInput.style.cssText = "font-family:'Barlow Condensed'; font-size:20px; font-weight:700; color:var(--navy); border:none; background:transparent; padding:2px 0; width:220px;";
+    nameInput.oninput = ()=> cat.label = nameInput.value;
+    titleWrap.appendChild(nameInput);
+    head.appendChild(titleWrap);
+
+    const rightSide = el('div');
+    rightSide.style.cssText = 'display:flex; gap:8px; align-items:center; flex-wrap:wrap;';
+    const modeSel = document.createElement('select');
+    modeSel.innerHTML = '<option value="shift">Start / End shift</option><option value="daily">Single daily / use check</option>';
+    modeSel.value = checkModeFor(cat);
+    modeSel.onchange = ()=> cat.checkMode = modeSel.value;
+    rightSide.appendChild(modeSel);
+    const unitSel = document.createElement('select');
+    unitSel.innerHTML = '<option value="miles">Tracks miles</option><option value="hours">Tracks hours</option><option value="none">Not tracked (e.g. trailers)</option>';
+    unitSel.value = cat.trackingUnit;
+    unitSel.onchange = ()=> cat.trackingUnit = unitSel.value;
+    rightSide.appendChild(unitSel);
+    if(isFullAdmin() || cat.department === state.currentDepartmentKey){
+      const delBtn = document.createElement('button');
+      delBtn.className='btn btn-outline btn-sm'; delBtn.textContent='Delete type';
+      delBtn.onclick = async ()=>{
+        const inUse = state.buses.some(b => (b.category||'shuttle')===cat.key);
+        if(inUse && !confirm('Some equipment is currently set to "' + cat.label + '". Deleting the type won\'t delete that equipment, but it will fall back to the first available type. Continue?')) return;
+        if(!inUse && !confirm('Delete "' + cat.label + '"?')) return;
+        state.categories = state.categories.filter(c=>c.key!==cat.key);
+        const ok = await saveCategories();
+        if(!ok){ alert('Could not save.' + (lastStorageError?'\n\nDetails: '+lastStorageError:'')); return; }
+        renderAdminTab(holder);
+      };
+      rightSide.appendChild(delBtn);
+    }
+    head.appendChild(rightSide);
+    card.appendChild(head);
+
+    card.appendChild(el('div','section-label','Pre-trip checklist items'));
+    const itemsWrap = el('div');
+    cat.checklist.forEach((item, itemIdx) => {
+      const row = el('div');
+      row.style.cssText = 'display:flex; gap:8px; align-items:center; margin-bottom:8px;';
+      const itemInput = document.createElement('input');
+      itemInput.type='text'; itemInput.value=item.label; itemInput.style.flex='1';
+      itemInput.oninput = ()=> item.label = itemInput.value;
+      row.appendChild(itemInput);
+      const rmItemBtn = document.createElement('button');
+      rmItemBtn.className='btn btn-outline btn-sm'; rmItemBtn.textContent='Remove';
+      rmItemBtn.onclick = ()=>{ cat.checklist.splice(itemIdx,1); renderAdminTab(holder); };
+      row.appendChild(rmItemBtn);
+      itemsWrap.appendChild(row);
+    });
+    card.appendChild(itemsWrap);
+    const addItemBtn = document.createElement('button');
+    addItemBtn.className='btn-add-issue'; addItemBtn.textContent='+ Add checklist item';
+    addItemBtn.onclick = ()=>{ cat.checklist.push({key: uid('chk'), label:'New check'}); renderAdminTab(holder); };
+    card.appendChild(addItemBtn);
+
+    card.appendChild(el('div','section-label','Notifications'));
+    const notifyField = el('div','field'); notifyField.style.maxWidth='420px';
+    notifyField.innerHTML = '<label>Send this type\'s check-failure alerts to (optional — leave blank to use the default in Settings)</label>';
+    const notifyInput = document.createElement('input');
+    notifyInput.type='text'; notifyInput.placeholder='e.g. buildingmaintenance@shantycreek.com'; notifyInput.value = cat.notifyEmail || '';
+    notifyInput.oninput = ()=> cat.notifyEmail = notifyInput.value;
+    notifyField.appendChild(notifyInput);
+    card.appendChild(notifyField);
+
+    const pmNotifyField = el('div','field'); pmNotifyField.style.maxWidth='420px';
+    pmNotifyField.innerHTML = '<label>Send this type\'s maintenance (PM) alerts to (optional — leave blank to use the check-failure address above, or the Settings default)</label>';
+    const pmNotifyInput = document.createElement('input');
+    pmNotifyInput.type='text'; pmNotifyInput.placeholder='Leave blank to fall back automatically'; pmNotifyInput.value = cat.pmNotifyEmail || '';
+    pmNotifyInput.oninput = ()=> cat.pmNotifyEmail = pmNotifyInput.value;
+    pmNotifyField.appendChild(pmNotifyInput);
+    card.appendChild(pmNotifyField);
+
+    const saveRow = el('div'); saveRow.style.marginTop='14px';
+    const saveBtn = document.createElement('button');
+    saveBtn.className='btn btn-primary'; saveBtn.style.width='auto'; saveBtn.style.padding='11px 18px'; saveBtn.textContent='Save changes';
+    saveBtn.onclick = async ()=>{
+      saveBtn.textContent='Saving...';
+      const ok = await saveCategories();
+      saveBtn.textContent = ok ? 'Saved' : 'Save failed';
+      if(!ok) alert('Could not save.' + (lastStorageError?'\n\nDetails: '+lastStorageError:''));
+      setTimeout(()=>{ saveBtn.textContent='Save changes'; }, 1500);
+    };
+    saveRow.appendChild(saveBtn);
+    card.appendChild(saveRow);
+
+    holder.appendChild(card);
+  });
+
+  if(isFullAdmin()){
+  const missing = defaultCategories().filter(dc => !state.categories.some(c => c.key === dc.key));
+  if(missing.length){
+    const syncCard = el('div','card');
+    syncCard.style.cssText = 'border-style:dashed; box-shadow:none;';
+    syncCard.innerHTML = '<div class="section-label">New built-in types available</div>';
+    syncCard.appendChild(el('div','note', missing.map(m=>m.label).join(', ') + ' — not in your list yet. Adding them won\'t touch or overwrite anything you\'ve already customized.'));
+    const syncBtn = document.createElement('button');
+    syncBtn.className='btn btn-gold'; syncBtn.style.marginTop='12px'; syncBtn.style.width='auto'; syncBtn.style.padding='11px 18px';
+    syncBtn.textContent = 'Add ' + missing.length + ' missing type' + (missing.length===1?'':'s');
+    syncBtn.onclick = async ()=>{
+      syncBtn.disabled = true; syncBtn.textContent = 'Adding...';
+      state.categories = state.categories.concat(missing);
+      const ok = await saveCategories();
+      if(!ok){
+        state.categories = state.categories.filter(c => !missing.some(m=>m.key===c.key)); // roll back
+        alert('Could not save.' + (lastStorageError?'\n\nDetails: '+lastStorageError:''));
+        syncBtn.disabled = false; syncBtn.textContent = 'Add ' + missing.length + ' missing type' + (missing.length===1?'':'s');
+        return;
+      }
+      renderAdminTab(holder);
+    };
+    syncCard.appendChild(syncBtn);
+    holder.appendChild(syncCard);
+  }
+  }
+}
+
+/* ---------- bulk PM schedule upload ---------- */
+let pendingPmImportRows = null;
+
+function downloadPmCsvTemplate(){
+  const rows = [['Unit ID','Unit Name','PM Item','Interval','Last Done At (optional)']];
+  const trackable = busesForCurrentUser().filter(b => categoryFor(b).trackingUnit !== 'none');
+  trackable.sort((a,b)=> a.id.localeCompare(b.id, undefined, {numeric:true}));
+  trackable.forEach(b => rows.push([b.id, b.name||'', '', '', '']));
+  const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const blob = new Blob([csv], {type:'text/csv'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'pm-schedule-upload-template.csv'; a.click();
+  URL.revokeObjectURL(url);
+}
+function renderPmImportPreview(container, holder){
+  container.innerHTML = '';
+  if(!pendingPmImportRows || !pendingPmImportRows.length) return;
+
+  const okRows = pendingPmImportRows.filter(r=>r.status==='ok');
+  const errRows = pendingPmImportRows.filter(r=>r.status!=='ok');
+
+  const table = document.createElement('table');
+  table.innerHTML = '<thead><tr><th>Unit ID</th><th>Unit</th><th>PM Item</th><th>Interval</th><th>Last Done At</th><th>Status</th></tr></thead>';
+  const tbody = document.createElement('tbody');
+  pendingPmImportRows.forEach(r=>{
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td><strong>${escapeHtml(r.id||'—')}</strong></td>
+      <td>${escapeHtml(r.busName||'—')}</td>
+      <td>${escapeHtml(r.label||'—')}</td>
+      <td>${r.interval!=null ? escapeHtml(String(r.interval)) : '—'}</td>
+      <td>${r.lastDone!=null ? escapeHtml(String(r.lastDone)) : '<span class="note">current reading</span>'}</td>
+      <td>${r.status==='ok' ? '<span class="tag resolved">Will add</span>' : '<span class="tag open">'+escapeHtml(r.reason)+'</span>'}</td>`;
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  const scrollWrap = el('div','table-scroll');
+  scrollWrap.appendChild(table);
+  container.appendChild(scrollWrap);
+
+  const summary = el('div','note');
+  summary.style.margin = '10px 2px';
+  summary.textContent = okRows.length + ' PM item(s) will be added' + (errRows.length ? ', ' + errRows.length + ' skipped (fix and re-upload if needed)' : '') + '.';
+  container.appendChild(summary);
+
+  const btnRow = el('div');
+  btnRow.style.cssText = 'display:flex; gap:10px; flex-wrap:wrap;';
+  const confirmBtn = document.createElement('button');
+  confirmBtn.className='btn btn-gold'; confirmBtn.style.width='auto'; confirmBtn.style.padding='12px 20px';
+  confirmBtn.textContent = 'Import ' + okRows.length + ' PM item(s)';
+  confirmBtn.disabled = okRows.length === 0;
+  confirmBtn.onclick = async ()=>{
+    confirmBtn.disabled = true; confirmBtn.textContent = 'Importing...';
+    const snapshot = JSON.parse(JSON.stringify(state.buses));
+    okRows.forEach(r=>{
+      const bus = state.buses.find(b=>b.id===r.id);
+      if(!bus) return;
+      if(!bus.pmItems) bus.pmItems = [];
+      bus.pmItems.push({
+        key: uid('pm'),
+        label: r.label,
+        intervalValue: r.interval,
+        lastDoneReading: r.lastDone != null ? r.lastDone : (lastMileage(bus.id) || 0)
+      });
+    });
+    const ok = await saveBuses();
+    if(!ok){
+      state.buses = snapshot;
+      alert('Could not save these PM items.' + (lastStorageError ? '\n\nDetails: ' + lastStorageError : ''));
+      confirmBtn.disabled = false; confirmBtn.textContent = 'Import ' + okRows.length + ' PM item(s)';
+      return;
+    }
+    pendingPmImportRows = null;
+    renderAdminTab(holder);
+  };
+  btnRow.appendChild(confirmBtn);
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className='btn btn-outline'; cancelBtn.textContent='Cancel';
+  cancelBtn.onclick = ()=>{ pendingPmImportRows = null; renderAdminTab(holder); };
+  btnRow.appendChild(cancelBtn);
+  container.appendChild(btnRow);
+}
+
+function renderPmTab(holder){
+  const intro = el('div','note');
+  intro.style.margin = '2px 2px 14px';
+  intro.textContent = 'Set a schedule per piece of equipment — e.g. "Oil change every 250 hours." Once the current reading crosses that line, a maintenance email goes out, and keeps going out on every new log until you mark it done here. Not available for equipment that doesn\'t track miles or hours.';
+  holder.appendChild(intro);
+
+  const filterVal = state.admin.pmTypeFilter || 'all';
+  const locationVal = state.admin.pmLocationFilter || 'all';
+  let visibleBuses = busesForCurrentUser().filter(b => {
+    const typeOk = filterVal==='all' || (b.category||'shuttle')===filterVal;
+    const locOk = locationVal==='all' || locationForBus(b)===locationVal;
+    return typeOk && locOk && categoryFor(b).trackingUnit !== 'none';
+  });
+  visibleBuses.sort((a,b)=> a.id.localeCompare(b.id, undefined, {numeric:true}));
+
+  const toolbar = el('div','toolbar pin-top');
+  const filterSel = document.createElement('select');
+  filterSel.innerHTML = '<option value="all">All types</option>' + categoriesForCurrentUser().map(c=>`<option value="${escapeHtml(c.key)}">${escapeHtml(c.label)}</option>`).join('');
+  filterSel.value = filterVal;
+  filterSel.onchange = ()=>{ state.admin.pmTypeFilter = filterSel.value; renderAdminTab(holder); };
+  toolbar.appendChild(document.createTextNode('Type: '));
+  toolbar.appendChild(filterSel);
+  const locSel = document.createElement('select');
+  locSel.innerHTML = '<option value="all">All locations</option>' + LOCATIONS.map(l=>`<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('');
+  locSel.value = locationVal;
+  locSel.onchange = ()=>{ state.admin.pmLocationFilter = locSel.value; renderAdminTab(holder); };
+  toolbar.appendChild(document.createTextNode('Location: '));
+  toolbar.appendChild(locSel);
+  holder.appendChild(toolbar);
+
+  const anyTrackable = busesForCurrentUser().some(b => categoryFor(b).trackingUnit !== 'none');
+  if(anyTrackable){
+    const uploadCard = el('div','card');
+    uploadCard.innerHTML = '<div class="section-label">Or upload a PM schedule CSV</div>';
+    const uploadDesc = el('div','note');
+    uploadDesc.style.marginBottom = '12px';
+    uploadDesc.textContent = 'Five columns: Unit ID, Unit Name (for reference only, not matched on), PM Item, Interval, Last Done At (optional — leave blank to use the unit\'s current reading). One row per PM item — give a unit several rows for several items. Download the template for a row pre-filled per trackable unit.';
+    uploadCard.appendChild(uploadDesc);
+
+    const uploadRow = el('div');
+    uploadRow.style.cssText = 'display:flex; gap:10px; flex-wrap:wrap; align-items:center;';
+    const templateBtn = document.createElement('button');
+    templateBtn.className='btn btn-outline btn-sm'; templateBtn.textContent='Download CSV template';
+    templateBtn.onclick = downloadPmCsvTemplate;
+    uploadRow.appendChild(templateBtn);
+
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file'; fileInput.accept = '.csv,text/csv';
+    fileInput.id = 'pm-csv-upload-input';
+    uploadRow.appendChild(fileInput);
+    uploadCard.appendChild(uploadRow);
+
+    const previewContainer = el('div');
+    previewContainer.style.marginTop = '14px';
+    uploadCard.appendChild(previewContainer);
+
+    fileInput.onchange = (e)=>{
+      const file = e.target.files[0];
+      if(!file) return;
+      const reader = new FileReader();
+      reader.onload = (ev)=>{
+        const rows = parseCsv(String(ev.target.result));
+        if(!rows.length){ alert('That file looks empty.'); return; }
+        let dataRows = rows;
+        const first = rows[0].map(x=>String(x).trim().toLowerCase());
+        if(first[0]==='unit id' || first[0]==='id') dataRows = rows.slice(1);
+
+        const seenInFile = new Set();
+        pendingPmImportRows = dataRows.filter(r=>r.some(c=>String(c).trim()!=='')).map(r=>{
+          const id = String(r[0]||'').trim();
+          const nameRaw = String(r[1]||'').trim();
+          const label = String(r[2]||'').trim();
+          const intervalRaw = String(r[3]||'').trim();
+          const lastDoneRaw = String(r[4]||'').trim();
+
+          const bus = busesForCurrentUser().find(b=>b.id===id);
+          const cat = bus ? categoryFor(bus) : null;
+          const interval = intervalRaw ? Number(intervalRaw) : NaN;
+          const lastDone = lastDoneRaw ? Number(lastDoneRaw) : null;
+          const dupKey = id.toLowerCase() + '|' + label.toLowerCase();
+
+          let status='ok', reason='';
+          if(!id){ status='error'; reason='Missing unit ID'; }
+          else if(!bus){ status='error'; reason='Unknown unit ID'; }
+          else if(cat.trackingUnit==='none'){ status='error'; reason="Unit type doesn't track hours/miles"; }
+          else if(!label){ status='error'; reason='Missing PM item name'; }
+          else if(!intervalRaw || isNaN(interval) || interval<=0){ status='error'; reason='Interval must be a positive number'; }
+          else if(lastDoneRaw && isNaN(lastDone)){ status='error'; reason='Last done reading must be a number'; }
+          else if(bus.pmItems && bus.pmItems.some(p=>(p.label||'').trim().toLowerCase()===label.toLowerCase())){ status='error'; reason='Item already exists on this unit'; }
+          else if(seenInFile.has(dupKey)){ status='error'; reason='Duplicate in file'; }
+
+          if(status==='ok') seenInFile.add(dupKey);
+          return {
+            id,
+            busName: bus ? bus.name : nameRaw,
+            label,
+            interval: isNaN(interval) ? null : interval,
+            lastDone: (lastDoneRaw && !isNaN(lastDone)) ? lastDone : null,
+            status, reason
+          };
+        });
+        renderPmImportPreview(previewContainer, holder);
+      };
+      reader.readAsText(file);
+    };
+
+    if(pendingPmImportRows) renderPmImportPreview(previewContainer, holder);
+    holder.appendChild(uploadCard);
+  }
+
+  if(!visibleBuses.length){
+    holder.appendChild(el('div','empty','No trackable equipment matches this filter.'));
+    return;
+  }
+
+  visibleBuses.forEach(b=>{
+    const cat = categoryFor(b);
+    const unit = unitLabel(cat.trackingUnit);
+    const current = lastMileage(b.id);
+    const card = el('div','card');
+    const head = el('div','flex-between');
+    head.innerHTML = `<div><span style="font-family:'Barlow Condensed'; font-size:20px; font-weight:700; color:var(--navy);">${escapeHtml(b.id)}</span>
+      <span style="color:var(--ink-soft); font-size:13px;"> ${escapeHtml(b.name||'')} · ${escapeHtml(cat.label)}</span></div>
+      <div class="mono" style="font-size:13px; color:var(--ink-soft);">${current!=null ? 'Current: ' + current.toLocaleString() + ' ' + unit : 'No readings yet'}</div>`;
+    card.appendChild(head);
+
+    const items = b.pmItems || [];
+    if(!items.length){
+      card.appendChild(el('div','note','No PM items set up for this unit yet.'));
+    }
+    items.forEach((p, idx) => {
+      const dueAt = (p.lastDoneReading||0) + Number(p.intervalValue||0);
+      const isDue = current != null && current >= dueAt;
+      const row = el('div');
+      row.style.cssText = 'border:1.5px solid ' + (isDue?'var(--bad)':'var(--line)') + '; border-radius:8px; padding:12px; margin-top:10px;' + (isDue?' background:#fbe3e0;':'');
+
+      const rowTop = el('div');
+      rowTop.style.cssText = 'display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end; margin-bottom:8px;';
+      const labelField = el('div','field'); labelField.style.cssText='margin-bottom:0; flex:1; min-width:140px;';
+      labelField.innerHTML = '<label>Item</label>';
+      const labelInput = document.createElement('input');
+      labelInput.type='text'; labelInput.value = p.label;
+      labelInput.oninput = ()=> p.label = labelInput.value;
+      labelField.appendChild(labelInput);
+      rowTop.appendChild(labelField);
+
+      const intField = el('div','field'); intField.style.cssText='margin-bottom:0; min-width:110px;';
+      intField.innerHTML = '<label>Every (' + unit + ')</label>';
+      const intInput = document.createElement('input');
+      intInput.type='number'; intInput.value = p.intervalValue;
+      intInput.oninput = ()=> p.intervalValue = Number(intInput.value);
+      intField.appendChild(intInput);
+      rowTop.appendChild(intField);
+
+      const rmBtn = document.createElement('button');
+      rmBtn.className='btn btn-outline btn-sm'; rmBtn.textContent='Remove';
+      rmBtn.onclick = async ()=>{
+        b.pmItems.splice(idx,1);
+        const ok = await saveBuses();
+        if(!ok){ alert('Could not save.' + (lastStorageError?'\n\nDetails: '+lastStorageError:'')); return; }
+        renderAdminTab(holder);
+      };
+      rowTop.appendChild(rmBtn);
+      row.appendChild(rowTop);
+
+      const statusLine = el('div','note');
+      statusLine.style.marginBottom = '8px';
+      statusLine.innerHTML = 'Last done at <strong>' + (p.lastDoneReading||0).toLocaleString() + ' ' + unit + '</strong> · due at <strong>' + dueAt.toLocaleString() + ' ' + unit + '</strong>' +
+        (isDue ? ' · <span style="color:var(--bad); font-weight:700;">DUE' + (current!=null ? ' (' + (current-dueAt).toLocaleString() + ' ' + unit + ' over)' : '') + '</span>' : ' · <span style="color:var(--ok);">OK</span>');
+      row.appendChild(statusLine);
+
+      const doneRow = el('div');
+      doneRow.style.cssText = 'display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap;';
+      const doneField = el('div','field'); doneField.style.cssText='margin-bottom:0; min-width:130px;';
+      doneField.innerHTML = '<label>Mark done at</label>';
+      const doneInput = document.createElement('input');
+      doneInput.type='number'; doneInput.placeholder = current!=null ? String(current) : 'reading';
+      doneField.appendChild(doneInput);
+      doneRow.appendChild(doneField);
+      const doneBtn = document.createElement('button');
+      doneBtn.className='btn btn-primary btn-sm'; doneBtn.textContent='Mark done';
+      doneBtn.onclick = async ()=>{
+        const val = doneInput.value ? Number(doneInput.value) : current;
+        if(val == null){ alert('Enter the reading it was done at, or log a shift for this unit first.'); return; }
+        p.lastDoneReading = val;
+        doneBtn.disabled = true; doneBtn.textContent = 'Saving...';
+        const ok = await saveBuses();
+        if(!ok){ alert('Could not save.' + (lastStorageError?'\n\nDetails: '+lastStorageError:'')); doneBtn.disabled=false; doneBtn.textContent='Mark done'; return; }
+        renderAdminTab(holder);
+      };
+      doneRow.appendChild(doneBtn);
+
+      const saveBtn = document.createElement('button');
+      saveBtn.className='btn btn-outline btn-sm'; saveBtn.textContent='Save changes';
+      saveBtn.onclick = async ()=>{
+        saveBtn.textContent='Saving...';
+        const ok = await saveBuses();
+        saveBtn.textContent = ok ? 'Saved' : 'Save failed';
+        if(!ok) alert('Could not save.' + (lastStorageError?'\n\nDetails: '+lastStorageError:''));
+        setTimeout(()=>{ saveBtn.textContent='Save changes'; }, 1500);
+      };
+      doneRow.appendChild(saveBtn);
+      row.appendChild(doneRow);
+
+      card.appendChild(row);
+    });
+
+    const addBtn = document.createElement('button');
+    addBtn.className='btn-add-issue'; addBtn.style.marginTop='10px'; addBtn.textContent='+ Add PM item';
+    addBtn.onclick = async ()=>{
+      if(!b.pmItems) b.pmItems = [];
+      b.pmItems.push({ key: uid('pm'), label: 'New PM item', intervalValue: 100, lastDoneReading: current||0 });
+      const ok = await saveBuses();
+      if(!ok){ alert('Could not save.' + (lastStorageError?'\n\nDetails: '+lastStorageError:'')); return; }
+      renderAdminTab(holder);
+    };
+    card.appendChild(addBtn);
+
+    holder.appendChild(card);
+  });
+}
+
+function renderIssuesTab(holder, all){
+  const myBusIds = new Set(busesForCurrentUser().map(b=>b.id));
+  const rows = [];
+  all.filter(s=>myBusIds.has(s.busId)).forEach(s => {
+    const cat = categoryFor(state.buses.find(b=>b.id===s.busId) || {id:s.busId});
+    allFlaggedItems(s, cat).forEach(item => rows.push({shift:s, item}));
+  });
+  const toolbar = el('div','toolbar pin-top');
+  const sel = document.createElement('select');
+  sel.innerHTML = '<option value="open">Open</option><option value="resolved">Resolved</option><option value="all">All</option>';
+  sel.value = state.admin.issueFilter || 'open';
+  sel.onchange = ()=>{ state.admin.issueFilter = sel.value; renderAdminTab(holder); };
+  toolbar.appendChild(document.createTextNode('Show: '));
+  toolbar.appendChild(sel);
+  holder.appendChild(toolbar);
+
+  const filter = state.admin.issueFilter || 'open';
+  const filtered = rows.filter(r => filter==='all' ? true : filter==='resolved' ? r.shift.issuesResolved : !r.shift.issuesResolved);
+  filtered.sort((a,b)=> new Date(b.shift.timestamp) - new Date(a.shift.timestamp));
+
+  const card = el('div','card');
+  if(!filtered.length){
+    card.appendChild(el('div','empty','No issues in this view.'));
+  } else {
+    const table = document.createElement('table');
+    table.innerHTML = '<thead><tr><th>Equipment</th><th>Reported</th><th>Driver</th><th>Source</th><th>Category</th><th>Severity</th><th>Note</th><th>Status</th><th></th></tr></thead>';
+    const tbody = document.createElement('tbody');
+    filtered.forEach(r=>{
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td><strong>${escapeHtml(r.shift.busId)}</strong></td>
+        <td>${fmtDT(r.shift.timestamp)}</td>
+        <td>${escapeHtml(r.shift.driver)}</td>
+        <td>${r.item.source==='check' ? '<span class="tag minor">Checklist</span>' : '<span class="tag resolved" style="background:#e6e0f0;color:#5a3d99;">Reported</span>'}</td>
+        <td>${escapeHtml(r.item.label)}</td>
+        <td>${r.item.severity==='urgent' ? '<span class="tag open">Urgent</span>' : '<span class="tag minor">Minor</span>'}</td>
+        <td style="max-width:220px;">${escapeHtml(r.item.note||'—')}</td>
+        <td>${r.shift.issuesResolved ? '<span class="tag resolved">Resolved</span>' : '<span class="tag open">Open</span>'}</td>`;
+      const tdBtn = document.createElement('td');
+      const btn = document.createElement('button');
+      btn.className='btn btn-outline btn-sm';
+      btn.textContent = r.shift.issuesResolved ? 'Reopen' : 'Mark resolved';
+      btn.onclick = async ()=>{
+        const arr = await loadShifts(r.shift.busId);
+        const target = arr.find(x=>x.id===r.shift.id);
+        if(target) target.issuesResolved = !target.issuesResolved;
+        await saveShifts(r.shift.busId, arr);
+        renderAdminTab(holder);
+      };
+      tdBtn.appendChild(btn);
+      tr.appendChild(tdBtn);
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    const scrollWrap = el('div','table-scroll');
+    scrollWrap.appendChild(table);
+    card.appendChild(scrollWrap);
+  }
+  holder.appendChild(card);
+}
+
+function renderLogTab(holder, all){
+  const myBuses = busesForCurrentUser();
+  const myBusIds = new Set(myBuses.map(b=>b.id));
+  const scopedAll = all.filter(s=>myBusIds.has(s.busId));
+
+  const toolbar = el('div','toolbar pin-top');
+  const sel = document.createElement('select');
+  sel.innerHTML = '<option value="all">All equipment</option>' + myBuses.map(b=>`<option value="${escapeHtml(b.id)}">${escapeHtml(b.id)}</option>`).join('');
+  sel.value = state.admin.logBus || 'all';
+  sel.onchange = ()=>{ state.admin.logBus = sel.value; renderAdminTab(holder); };
+  toolbar.appendChild(document.createTextNode('Equipment: '));
+  toolbar.appendChild(sel);
+
+  const locSel = document.createElement('select');
+  locSel.innerHTML = '<option value="all">All locations</option>' + LOCATIONS.map(l=>`<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('');
+  locSel.value = state.admin.logLocation || 'all';
+  locSel.onchange = ()=>{ state.admin.logLocation = locSel.value; renderAdminTab(holder); };
+  toolbar.appendChild(document.createTextNode('Location: '));
+  toolbar.appendChild(locSel);
+
+  const exportBtn = document.createElement('button');
+  exportBtn.className='btn btn-outline btn-sm'; exportBtn.textContent='Export CSV';
+  exportBtn.onclick = ()=> exportCsv(scopedAll);
+  toolbar.appendChild(exportBtn);
+
+  const busFilter = state.admin.logBus || 'all';
+  const locFilter = state.admin.logLocation || 'all';
+
+  if(busFilter !== 'all'){
+    const clearBtn = document.createElement('button');
+    clearBtn.className='btn btn-outline btn-sm'; clearBtn.textContent='Clear all logs for ' + busFilter;
+    clearBtn.onclick = async ()=>{
+      if(!confirm('Delete ALL shift logs for ' + busFilter + '? This cannot be undone.')) return;
+      const ok = await saveShifts(busFilter, []);
+      if(!ok){ alert('Could not delete.' + (lastStorageError?'\n\nDetails: '+lastStorageError:'')); return; }
+      renderAdminTab(holder);
+    };
+    toolbar.appendChild(clearBtn);
+  }
+  holder.appendChild(toolbar);
+
+  let filtered = busFilter==='all' ? scopedAll : scopedAll.filter(s=>s.busId===busFilter);
+  if(locFilter !== 'all'){
+    filtered = filtered.filter(s => locationForBus(state.buses.find(b=>b.id===s.busId) || {id:s.busId}) === locFilter);
+  }
+
+  const card = el('div','card');
+  if(!filtered.length){
+    card.appendChild(el('div','empty','No shift logs yet.'));
+  } else {
+    const table = document.createElement('table');
+    table.innerHTML = '<thead><tr><th>When</th><th>Equipment</th><th>Driver</th><th>Action</th><th>Reading</th><th>Issues</th><th>Notes</th><th></th></tr></thead>';
+    const tbody = document.createElement('tbody');
+    filtered.forEach(s=>{
+      const tr = document.createElement('tr');
+      const sBus = state.buses.find(b=>b.id===s.busId) || {id:s.busId};
+      const sUnit = unitLabel(categoryFor(sBus).trackingUnit);
+      let issueCell = '—';
+      const failCount = s.preTrip ? Object.values(s.preTrip).filter(c=>c.status==='fail').length : 0;
+      const issueCount = (s.issues && s.issues.length) || 0;
+      const hasUrgentIssue = recordHasUrgent(s, categoryFor(sBus));
+      if(s.action==='start' || s.action==='daily'){
+        const parts = [];
+        if(s.preTrip) parts.push(failCount ? failCount+' failed' : 'All passed');
+        if(issueCount) parts.push(issueCount+' issue'+(issueCount===1?'':'s'));
+        issueCell = (parts.length ? parts.join(' · ') : '—') + (hasUrgentIssue ? ' ⚠' : '');
+      } else if(s.action==='end' && issueCount){
+        issueCell = issueCount + (hasUrgentIssue ? ' ⚠' : '');
+      }
+      const actionTag = s.action==='start' ? '<span class="tag resolved">Start</span>'
+        : s.action==='end' ? '<span class="tag open" style="background:#f0e6d0;color:#8a6d1a;">End</span>'
+        : '<span class="tag resolved" style="background:#e6e0f0;color:#5a3d99;">Check</span>';
+      tr.innerHTML = `<td>${fmtDT(s.timestamp)}</td>
+        <td><strong>${escapeHtml(s.busId)}</strong></td>
+        <td>${escapeHtml(s.driver)}</td>
+        <td>${actionTag}</td>
+        <td class="mono">${s.mileage!=null ? s.mileage.toLocaleString()+' '+sUnit : '—'}</td>
+        <td>${issueCell}</td>
+        <td style="max-width:220px;">${escapeHtml(s.notes||'—')}</td>`;
+      const tdDel = document.createElement('td');
+      const delBtn = document.createElement('button');
+      delBtn.className='btn btn-outline btn-sm'; delBtn.textContent='Delete';
+      delBtn.onclick = async ()=>{
+        if(!confirm('Delete this shift log entry? This cannot be undone.')) return;
+        const arr = await loadShifts(s.busId);
+        const newArr = arr.filter(x=>x.id!==s.id);
+        const ok = await saveShifts(s.busId, newArr);
+        if(!ok){ alert('Could not delete.' + (lastStorageError?'\n\nDetails: '+lastStorageError:'')); return; }
+        renderAdminTab(holder);
+      };
+      tdDel.appendChild(delBtn);
+      tr.appendChild(tdDel);
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    const scrollWrap = el('div','table-scroll');
+    scrollWrap.appendChild(table);
+    card.appendChild(scrollWrap);
+  }
+  holder.appendChild(card);
+}
+
+function exportCsv(all){
+  const rows = [['Timestamp','Bus','Driver','Action','Odometer','Failed Checks','Issue Count','Urgent','Notes']];
+  all.forEach(s=>{
+    const cat = categoryFor(state.buses.find(b=>b.id===s.busId) || {id:s.busId});
+    const failCount = s.preTrip ? Object.values(s.preTrip).filter(c=>c.status==='fail').length : 0;
+    rows.push([
+      s.timestamp, s.busId, s.driver, s.action, (s.mileage!=null ? s.mileage : ''),
+      failCount,
+      (s.issues||[]).length,
+      recordHasUrgent(s, cat) ? 'YES' : 'NO',
+      (s.notes||'').replace(/[\r\n]+/g,' ')
+    ]);
+  });
+  const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const blob = new Blob([csv], {type:'text/csv'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'fleet-shift-log.csv'; a.click();
+  URL.revokeObjectURL(url);
+}
+
+/* ---------- small dom helpers ---------- */
+function el(tag, cls, text){
+  const e = document.createElement(tag);
+  if(cls) e.className = cls;
+  if(text!=null) e.textContent = text;
+  return e;
+}
+function escapeHtml(str){
+  return String(str).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+/* ---------- mode toggle ---------- */
+document.getElementById('modeToggle').addEventListener('click', (e)=>{
+  if(state.qrLocked) return; // driver QR sessions never expose admin
+  const btn = e.target.closest('button[data-mode]');
+  if(!btn) return;
+  document.querySelectorAll('#modeToggle button').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  state.mode = btn.dataset.mode;
+  render();
+});
+
+/* ---------- boot ---------- */
+async function boot(){
+  app.innerHTML = '<div class="wrap"><div class="empty">Loading fleet data...</div></div>';
+
+  if(!supa){
+    app.innerHTML = '<div class="wrap"><div class="card"><div class="section-label">Can\'t connect to storage</div>' +
+      '<div class="note">The Supabase library didn\'t load, so buses, shift logs, and settings can\'t be read or saved. ' +
+      'If you\'re viewing this inside Claude, that\'s expected — Claude\'s sandbox blocks this kind of external request. ' +
+      'Open this page from where it\'s actually hosted (e.g. your GitHub Pages URL) and reload.</div></div></div>';
+    return;
+  }
+
+  await tryRestoreSession();
+  await loadBuses();
+  await loadCategories();
+  await loadDepartments();
+  await loadSettings();
+  await loadShiftsBatch(state.buses.map(b=>b.id));
+
+  // hash deep link: #bus=ID (single QR per unit; old #bus=ID&action=start/end links still honored)
+  const hash = window.location.hash.replace('#','');
+  if(hash){
+    const params = new URLSearchParams(hash);
+    const busId = params.get('bus');
+    const legacyAction = params.get('action');
+    const bus = state.buses.find(b=>b.id===busId);
+    if(busId && bus){
+      const mode = checkModeFor(categoryFor(bus));
+      state.mode='driver';
+      state.driver.busId = busId;
+      state.qrLocked = true;
+      state.qrLockedBusId = busId;
+
+      if(mode === 'shift'){
+        if(legacyAction==='start' || legacyAction==='end'){
+          state.driver.action = legacyAction;
+          state.driver.screen = 'form';
+        } else {
+          state.driver.screen = 'action';
+        }
+      } else {
+        formPreTrip = {};
+        formIssues = [];
+        state.driver.action = 'daily';
+        state.driver.screen = 'form';
+      }
+
+      const toggle = document.getElementById('modeToggle');
+      if(toggle) toggle.style.display = 'none';
+      const subtitle = document.querySelector('.brand-text .t2');
+      if(subtitle) subtitle.textContent = bus.id + (bus.name ? ' · ' + bus.name : '') + ' · ' + categoryFor(bus).label;
+    }
+  }
+  render();
+}
+boot();
+
+})();
+</script>
+</body>
+</html>
