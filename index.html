@@ -2291,7 +2291,7 @@ function renderBusesTab(holder){
   // Bulk selection toolbar
   const visibleIds = visibleBuses.map(b=>b.id);
   const selectedVisibleCount = visibleIds.filter(id=>selectedBusIds.has(id)).length;
-  const bulkBar = el('div','toolbar');
+  const bulkBar = el('div','toolbar pin-top');
   const selectAllLabel = document.createElement('label');
   selectAllLabel.style.cssText = 'display:flex; align-items:center; gap:7px; font-size:13px; font-weight:600; color:var(--ink-soft); cursor:pointer;';
   const selectAllCb = document.createElement('input');
