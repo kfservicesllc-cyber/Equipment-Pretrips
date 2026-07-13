@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Inter:wght@400;500;600;700&family=Roboto+Mono:wght@500;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <style>
   :root{
     --navy:#12233f;
@@ -534,6 +535,7 @@ const state = {
   currentDepartmentName: '', // display name for the signed-in department (from its profile row)
   shiftsCache: {}, // busId -> array
   settings: { notifyEmail: '', pmNotifyEmail: '' },
+  customLabelTemplates: {}, // Supabase-backed label sheet templates added via Settings → Label Templates
   qrLocked: false,
   siteUnlocked: false,
   qrLockedBusId: null,
@@ -682,6 +684,18 @@ async function loadDepartments(){
 }
 async function saveDepartments(){
   return await setJSON('departments', state.departments);
+}
+async function loadLabelTemplates(){
+  state.customLabelTemplates = await getJSON('labelTemplates', {});
+}
+async function saveLabelTemplates(){
+  return await setJSON('labelTemplates', state.customLabelTemplates);
+}
+// Merges the built-in Avery sizes with any custom ones added in Settings → Label Templates.
+// Custom templates are looked up fresh each time (not cached) since they can be added/removed
+// from the admin UI without a page reload.
+function allLabelTemplates(){
+  return Object.assign({}, LABEL_TEMPLATES, state.customLabelTemplates || {});
 }
 async function loadSettings(){
   state.settings = await getJSON('settings', { notifyEmail: '', pmNotifyEmail: '' });
@@ -1597,6 +1611,185 @@ function renderSettingsTab(holder){
   pmBtnRow.appendChild(pmTestBtn);
   pmCard.appendChild(pmBtnRow);
   holder.appendChild(pmCard);
+
+  renderLabelTemplatesCard(holder);
+}
+
+function renderLabelTemplatesCard(holder){
+  const card = el('div','card');
+  card.innerHTML = '<div class="section-label">Label sheet templates</div>';
+
+  const intro = el('div','note');
+  intro.style.marginBottom = '14px';
+  intro.textContent = 'Upload the Word (.docx) template straight from Avery for any label sheet you want to print QR codes on, and the layout — label size, how many fit per sheet, spacing, margins — is read from the file automatically. Review the detected numbers below before saving; you can adjust anything that looks off.';
+  card.appendChild(intro);
+
+  const uploadField = el('div','field');
+  uploadField.style.maxWidth = '420px';
+  uploadField.innerHTML = '<label>Avery template file (.docx)</label>';
+  const fileInput = document.createElement('input');
+  fileInput.type = 'file';
+  fileInput.accept = '.docx';
+  uploadField.appendChild(fileInput);
+  card.appendChild(uploadField);
+
+  const parseStatus = el('div','note');
+  parseStatus.style.margin = '10px 2px 0';
+  card.appendChild(parseStatus);
+
+  const reviewWrap = el('div');
+  reviewWrap.style.cssText = 'display:none; margin-top:16px; padding-top:16px; border-top:1px solid var(--line);';
+  card.appendChild(reviewWrap);
+
+  fileInput.onchange = async ()=>{
+    const file = fileInput.files && fileInput.files[0];
+    if(!file) return;
+    reviewWrap.style.display = 'none';
+    reviewWrap.innerHTML = '';
+    parseStatus.style.color = 'var(--ink-soft)';
+    parseStatus.textContent = 'Reading template...';
+    let parsed;
+    try{
+      parsed = await parseAveryTemplateFile(file);
+    }catch(e){
+      parseStatus.style.color = 'var(--bad)';
+      parseStatus.textContent = '✗ ' + e.message;
+      return;
+    }
+    parseStatus.style.color = 'var(--ok)';
+    parseStatus.textContent = '✓ Detected ' + parsed.cols + ' × ' + parsed.rows + ' (' + (parsed.cols*parsed.rows) + ' per sheet). Review the fields below, then save.';
+    renderTemplateReviewForm(reviewWrap, parsed);
+    reviewWrap.style.display = 'block';
+  };
+
+  function renderTemplateReviewForm(wrap, parsed){
+    const grid = el('div');
+    grid.style.cssText = 'display:grid; grid-template-columns:repeat(auto-fit, minmax(150px,1fr)); gap:12px; max-width:640px;';
+
+    function numField(label, key, step){
+      const f = el('div','field');
+      f.innerHTML = `<label>${escapeHtml(label)}</label>`;
+      const inp = document.createElement('input');
+      inp.type = 'number'; inp.step = step || '0.001'; inp.value = parsed[key];
+      inp.oninput = ()=>{ parsed[key] = parseFloat(inp.value) || 0; };
+      f.appendChild(inp);
+      grid.appendChild(f);
+      return inp;
+    }
+
+    const nameField = el('div','field');
+    nameField.style.gridColumn = '1 / -1';
+    nameField.innerHTML = '<label>Name (shown in the Label size dropdown)</label>';
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text'; nameInput.value = parsed.name;
+    nameInput.oninput = ()=>{ parsed.name = nameInput.value; };
+    nameField.appendChild(nameInput);
+    grid.appendChild(nameField);
+
+    numField('Columns', 'cols', '1');
+    numField('Rows', 'rows', '1');
+    numField('Label width (in)', 'labelW');
+    numField('Label height (in)', 'labelH');
+    numField('Side margin (in)', 'sideMargin');
+    numField('Top margin (in)', 'topMargin');
+    numField('Column gap (in)', 'colGap');
+    numField('Row gap (in)', 'rowGap');
+    numField('QR code size (in)', 'qrSize');
+
+    const layoutField = el('div','field');
+    layoutField.innerHTML = '<label>Content layout</label>';
+    const layoutSel = document.createElement('select');
+    layoutSel.innerHTML = '<option value="vertical">Stacked (QR above text)</option><option value="horizontal">Side-by-side (QR beside text)</option>';
+    layoutSel.value = parsed.layout;
+    layoutSel.onchange = ()=>{ parsed.layout = layoutSel.value; };
+    layoutField.appendChild(layoutSel);
+    grid.appendChild(layoutField);
+
+    const compactField = el('div','field');
+    compactField.innerHTML = '<label>Compact (for small labels)</label>';
+    const compactSel = document.createElement('select');
+    compactSel.innerHTML = '<option value="1">Yes — ID + caption only</option><option value="0">No — full details</option>';
+    compactSel.value = parsed.compact ? '1' : '0';
+    compactSel.onchange = ()=>{ parsed.compact = compactSel.value === '1'; };
+    compactField.appendChild(compactSel);
+    grid.appendChild(compactField);
+
+    wrap.appendChild(grid);
+
+    const saveStatus = el('div','note');
+    saveStatus.style.margin = '12px 2px 0';
+    wrap.appendChild(saveStatus);
+
+    const saveBtn = document.createElement('button');
+    saveBtn.className = 'btn btn-primary'; saveBtn.style.width = 'auto'; saveBtn.style.padding = '11px 18px'; saveBtn.style.marginTop = '12px';
+    saveBtn.textContent = 'Save template';
+    saveBtn.onclick = async ()=>{
+      if(!parsed.name.trim()){ saveStatus.style.color='var(--bad)'; saveStatus.textContent = 'Give the template a name first.'; return; }
+      if(!parsed.cols || !parsed.rows || !parsed.labelW || !parsed.labelH){ saveStatus.style.color='var(--bad)'; saveStatus.textContent = 'Columns, rows, and label width/height are required.'; return; }
+      saveBtn.textContent = 'Saving...';
+      const key = 'custom_' + uid('lbl');
+      state.customLabelTemplates[key] = {
+        name: parsed.name.trim(), cols: parsed.cols, rows: parsed.rows,
+        labelW: parsed.labelW, labelH: parsed.labelH,
+        sideMargin: parsed.sideMargin, topMargin: parsed.topMargin,
+        colGap: parsed.colGap, rowGap: parsed.rowGap,
+        layout: parsed.layout, qrSize: parsed.qrSize, compact: parsed.compact
+      };
+      const ok = await saveLabelTemplates();
+      if(ok){
+        saveStatus.style.color = 'var(--ok)';
+        saveStatus.textContent = '✓ Saved. It now shows up in the Label size dropdown on Equipment & QR Codes.';
+        wrap.style.display = 'none';
+        fileInput.value = '';
+        parseStatus.textContent = '';
+        renderSavedTemplatesList(savedListWrap);
+      } else {
+        delete state.customLabelTemplates[key];
+        saveStatus.style.color = 'var(--bad)';
+        saveStatus.textContent = '✗ Could not save. Please try again.';
+      }
+      saveBtn.textContent = 'Save template';
+    };
+    wrap.appendChild(saveBtn);
+  }
+
+  const savedListWrap = el('div');
+  savedListWrap.style.marginTop = '18px';
+  card.appendChild(savedListWrap);
+  renderSavedTemplatesList(savedListWrap);
+
+  function renderSavedTemplatesList(wrap){
+    wrap.innerHTML = '';
+    const keys = Object.keys(state.customLabelTemplates || {});
+    if(!keys.length){
+      wrap.appendChild(el('div','note','No custom label templates saved yet — the built-in Avery sizes are still available in the dropdown.'));
+      return;
+    }
+    wrap.appendChild(el('div','section-label','Saved custom templates'));
+    keys.forEach(key=>{
+      const t = state.customLabelTemplates[key];
+      const row = el('div');
+      row.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 0; border-bottom:1px solid var(--line);';
+      const info = el('div');
+      info.innerHTML = `<div style="font-weight:700;">${escapeHtml(t.name)}</div><div style="font-size:12px; color:var(--ink-soft);">${t.cols} × ${t.rows} · ${t.labelW}" × ${t.labelH}" labels</div>`;
+      row.appendChild(info);
+      const delBtn = document.createElement('button');
+      delBtn.className = 'btn btn-outline'; delBtn.style.width = 'auto'; delBtn.style.padding = '8px 14px'; delBtn.style.color = 'var(--bad)';
+      delBtn.textContent = 'Delete';
+      delBtn.onclick = async ()=>{
+        if(!confirm('Delete "' + t.name + '"? This can\'t be undone.')) return;
+        delete state.customLabelTemplates[key];
+        delBtn.textContent = 'Deleting...';
+        const ok = await saveLabelTemplates();
+        if(ok) renderSavedTemplatesList(wrap);
+        else { alert('Could not delete. Please try again.'); await loadLabelTemplates(); renderSavedTemplatesList(wrap); }
+      };
+      row.appendChild(delBtn);
+      wrap.appendChild(row);
+    });
+  }
+
+  holder.appendChild(card);
 }
 
 function renderAccountTab(holder){
@@ -1870,9 +2063,9 @@ function statCard(num,label){
   return s;
 }
 
-// Standard label-sheet geometry. Both die-cut sizes share the same 4in label
-// width, side margins, and column gap — they only differ in label height /
-// row count, since that's how these Avery-family sheets are actually cut.
+// Standard label-sheet geometry, pulled directly from Avery's own Word
+// templates (die-cut column/row widths, gaps, and margins in twips converted
+// to inches), not estimated. Each entry describes one physical sheet layout.
 const LABEL_TEMPLATES = {
   avery5163: {
     name: 'Avery 5163 (10/sheet)',
@@ -1889,15 +2082,21 @@ const LABEL_TEMPLATES = {
   avery22806: {
     name: 'Avery 22806 (12/sheet)',
     cols: 3, rows: 4, labelW: 2, labelH: 2,
-    sideMargin: 1.05, topMargin: 1.2, colGap: 0.2, rowGap: 0.2,
+    sideMargin: 0.625, topMargin: 0.625, colGap: 0.625, rowGap: 0.58264,
     layout: 'vertical', qrSize: 1.35, compact: true
+  },
+  avery94069: {
+    name: 'Avery 94069 (20/sheet)',
+    cols: 4, rows: 5, labelW: 2, labelH: 2,
+    sideMargin: 0.25, topMargin: 0.25, colGap: 0, rowGap: 0.125,
+    layout: 'vertical', qrSize: 1.3, compact: true
   },
   fitall: { name: 'Quick print (plain paper)' }
 };
 
 function printQrLabels(buses, labelSize){
   if(!buses || !buses.length) return;
-  const tmpl = LABEL_TEMPLATES[labelSize] || LABEL_TEMPLATES.avery5163;
+  const tmpl = allLabelTemplates()[labelSize] || LABEL_TEMPLATES.avery5163;
   const win = window.open('', '_blank');
   if(!win){ alert('Your browser blocked the print window — allow pop-ups for this site and try again.'); return; }
 
@@ -2009,6 +2208,106 @@ function printQrLabels(buses, labelSize){
   `);
   win.document.close();
   win.onload = () => { win.focus(); win.print(); };
+}
+
+/* ---------- Avery .docx template parser ----------
+   Reads an Avery-provided Word template (.docx, not the old .doc format) and derives the
+   same geometry a person would otherwise have to work out by hand: label width/height,
+   how many columns/rows fit per sheet, the gap between labels, and the sheet margins.
+
+   How it works: Avery's templates lay the labels out as a single Word table. The table's
+   column grid alternates label-width, gap-width, label-width, ... (or has no gap at all,
+   just repeated equal-width columns), and row heights follow the same pattern vertically.
+   We detect which width/height is the "real" label vs. the gap by majority count, then
+   center that grid on the actual page size to get the margins — rather than trusting the
+   template's own page-margin numbers, which are frequently just leftover authoring
+   artifacts that don't match where the die-cut labels actually sit. */
+function round5(n){ return Math.round(n * 100000) / 100000; }
+
+function detectLabelAxis(valuesTwips){
+  if(!valuesTwips.length) return null;
+  if(valuesTwips.length === 1) return { count: 1, size: valuesTwips[0], gap: 0 };
+  const groups = [];
+  valuesTwips.forEach(v=>{
+    const g = groups.find(g => Math.abs(g.value - v) <= 3);
+    if(g) g.count++; else groups.push({ value: v, count: 1 });
+  });
+  groups.sort((a,b)=> b.count - a.count);
+  const majority = groups[0];
+  if(groups.length === 1) return { count: valuesTwips.length, size: majority.value, gap: 0 };
+  const minority = groups[1];
+  const expectedLabelCount = Math.ceil(valuesTwips.length / 2);
+  const alternates = majority.count === expectedLabelCount && minority.count === (valuesTwips.length - expectedLabelCount);
+  if(alternates) return { count: majority.count, size: majority.value, gap: minority.value };
+  // Not a clean alternating pattern — likely a trailing scaffold column/row beyond the
+  // print area (seen in some real Avery files). Keep the majority value, drop the rest.
+  return { count: majority.count, size: majority.value, gap: 0 };
+}
+
+function humanizeTemplateFilename(filename){
+  const base = filename.replace(/\.[^.]+$/, '');
+  return base
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/([A-Za-z])([0-9])/g, '$1 $2')
+    .replace(/([0-9])([A-Za-z])/g, '$1 $2')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+async function parseAveryTemplateFile(file){
+  if(!/\.docx$/i.test(file.name)){
+    throw new Error('That\'s an old .doc file — this can only read the newer .docx format. Open it in Word or Google Docs and use "Save As" / "Download" → Word (.docx), then upload that instead.');
+  }
+  if(!window.JSZip){
+    throw new Error('The template-reading library didn\'t load. Refresh the page and try again.');
+  }
+  const buf = await file.arrayBuffer();
+  const zip = await window.JSZip.loadAsync(buf);
+  const docEntry = zip.file('word/document.xml');
+  if(!docEntry) throw new Error('This doesn\'t look like a Word document (no word/document.xml found inside).');
+  const xml = await docEntry.async('string');
+
+  const pgSzMatch = xml.match(/<w:pgSz\s+w:w="(\d+)"\s+w:h="(\d+)"/);
+  if(!pgSzMatch) throw new Error('Could not find a page size in this document.');
+  const pageW = parseInt(pgSzMatch[1], 10) / 1440;
+  const pageH = parseInt(pgSzMatch[2], 10) / 1440;
+
+  const gridMatch = xml.match(/<w:tblGrid>([\s\S]*?)<\/w:tblGrid>/);
+  if(!gridMatch) throw new Error('Could not find a label table in this document — is this really an Avery label template?');
+  const colWidths = Array.from(gridMatch[1].matchAll(/w:w="(\d+)"/g)).map(m=>parseInt(m[1],10));
+
+  const rowHeights = Array.from(xml.matchAll(/<w:trHeight\s+w:val="(\d+)"/g)).map(m=>parseInt(m[1],10));
+  if(!rowHeights.length) throw new Error('Could not find row heights in this document. You can still fill in the fields below by hand.');
+
+  const colAxis = detectLabelAxis(colWidths);
+  const rowAxis = detectLabelAxis(rowHeights);
+
+  const cols = colAxis.count, rows = rowAxis.count;
+  const labelW = colAxis.size / 1440, labelH = rowAxis.size / 1440;
+  const colGap = colAxis.gap / 1440, rowGap = rowAxis.gap / 1440;
+
+  const totalGridW = cols * labelW + (cols - 1) * colGap;
+  const totalGridH = rows * labelH + (rows - 1) * rowGap;
+  const sideMargin = Math.max(0, (pageW - totalGridW) / 2);
+  const topMargin = Math.max(0, (pageH - totalGridH) / 2);
+
+  const smaller = Math.min(labelW, labelH);
+  const compact = smaller <= 2.3;
+  const layout = labelW >= labelH ? 'horizontal' : 'vertical';
+  let qrSize;
+  if(compact) qrSize = smaller * 0.62;
+  else if(layout === 'horizontal') qrSize = labelH * 0.8;
+  else qrSize = labelW * 0.45;
+
+  return {
+    name: humanizeTemplateFilename(file.name) + ' (' + (cols*rows) + '/sheet)',
+    cols, rows,
+    labelW: round5(labelW), labelH: round5(labelH),
+    sideMargin: round5(sideMargin), topMargin: round5(topMargin),
+    colGap: round5(colGap), rowGap: round5(rowGap),
+    layout, qrSize: round5(qrSize), compact
+  };
 }
 
 /* ---------- bulk equipment upload ---------- */
@@ -2275,7 +2574,8 @@ function renderBusesTab(holder){
 
   const labelSizeVal = state.admin.busLabelSize || 'avery5163';
   const labelSizeSel = document.createElement('select');
-  labelSizeSel.innerHTML = Object.keys(LABEL_TEMPLATES).map(key=>`<option value="${key}">${escapeHtml(LABEL_TEMPLATES[key].name)}</option>`).join('');
+  const labelTemplatesNow = allLabelTemplates();
+  labelSizeSel.innerHTML = Object.keys(labelTemplatesNow).map(key=>`<option value="${key}">${escapeHtml(labelTemplatesNow[key].name)}</option>`).join('');
   labelSizeSel.value = labelSizeVal;
   labelSizeSel.title = 'Label paper size used by the Print buttons below';
   labelSizeSel.onchange = ()=>{ state.admin.busLabelSize = labelSizeSel.value; renderAdminTab(holder); };
@@ -3322,6 +3622,7 @@ async function boot(){
   await loadCategories();
   await loadDepartments();
   await loadSettings();
+  await loadLabelTemplates();
   await loadShiftsBatch(state.buses.map(b=>b.id));
 
   // hash deep link: #bus=ID (single QR per unit; old #bus=ID&action=start/end links still honored)
