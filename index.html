@@ -2369,7 +2369,45 @@ function renderEquipmentTypesTab(holder){
   addCatCard.appendChild(addRow);
   holder.appendChild(addCatCard);
 
-  categoriesForCurrentUser().forEach((cat, catIdx) => {
+  const typeSearchVal = state.admin.typesSearch || '';
+  const typeSortVal = state.admin.typesSort || 'default';
+
+  let visibleCats = categoriesForCurrentUser().slice();
+  if(typeSearchVal.trim()){
+    const q = typeSearchVal.trim().toLowerCase();
+    visibleCats = visibleCats.filter(c => c.label.toLowerCase().includes(q));
+  }
+  if(typeSortVal==='az') visibleCats.sort((a,b)=> a.label.localeCompare(b.label));
+  else if(typeSortVal==='za') visibleCats.sort((a,b)=> b.label.localeCompare(a.label));
+  // 'default' leaves visibleCats in the order categoriesForCurrentUser() already returns
+
+  const typesToolbar = el('div','toolbar pin-top');
+  const typeSearchInput = document.createElement('input');
+  typeSearchInput.type='text'; typeSearchInput.id='types-search-input'; typeSearchInput.placeholder='Search equipment types...';
+  typeSearchInput.value = typeSearchVal;
+  typeSearchInput.style.minWidth='220px';
+  typeSearchInput.oninput = ()=>{
+    state.admin.typesSearch = typeSearchInput.value;
+    const cursorPos = typeSearchInput.selectionStart;
+    renderAdminTab(holder).then(()=>{
+      const revived = document.getElementById('types-search-input');
+      if(revived){ revived.focus(); revived.setSelectionRange(cursorPos, cursorPos); }
+    });
+  };
+  typesToolbar.appendChild(typeSearchInput);
+
+  const typeSortSel = document.createElement('select');
+  typeSortSel.innerHTML = '<option value="default">Sort: Default order</option><option value="az">Sort: Name A–Z</option><option value="za">Sort: Name Z–A</option>';
+  typeSortSel.value = typeSortVal;
+  typeSortSel.onchange = ()=>{ state.admin.typesSort = typeSortSel.value; renderAdminTab(holder); };
+  typesToolbar.appendChild(typeSortSel);
+  holder.appendChild(typesToolbar);
+
+  if(!visibleCats.length){
+    holder.appendChild(el('div','empty','No equipment types match "' + typeSearchVal + '".'));
+  }
+
+  visibleCats.forEach((cat, catIdx) => {
     const card = el('div','card');
     const head = el('div','flex-between');
     const titleWrap = el('div');
