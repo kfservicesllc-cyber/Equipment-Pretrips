@@ -1869,51 +1869,59 @@ function statCard(num,label){
   return s;
 }
 
-function printQrLabel(bus, cat){
-  const qrLabel = checkModeFor(cat)==='shift' ? 'Scan for Start / End of Shift' : 'Scan to log a check';
-  const win = window.open('', '_blank', 'width=420,height=560');
-  if(!win){ alert('Your browser blocked the print window — allow pop-ups for this site and try again.'); return; }
-  win.document.write(`
-    <!DOCTYPE html><html><head><meta charset="UTF-8"><title>${escapeHtml(bus.id)} QR</title>
-    <style>
-      body{font-family:system-ui,sans-serif; text-align:center; padding:30px 20px; margin:0;}
-      .id{font-size:34px; font-weight:800; letter-spacing:.02em; margin-bottom:4px;}
-      .name{font-size:16px; color:#444; margin-bottom:2px;}
-      .type{font-size:12px; color:#777; text-transform:uppercase; letter-spacing:.08em; margin-bottom:20px;}
-      img{width:280px; height:280px;}
-      .label{font-size:14px; font-weight:600; margin-top:16px;}
-      .brand{font-size:11px; color:#999; margin-top:26px; text-transform:uppercase; letter-spacing:.08em;}
-    </style></head>
-    <body>
-      <div class="id">${escapeHtml(bus.id)}</div>
-      <div class="name">${escapeHtml(bus.name||'')}</div>
-      <div class="type">${escapeHtml(cat.label)}</div>
-      <img src="${qrUrl(selfUrlFor(bus.id), '400x400')}" alt="QR code">
-      <div class="label">${escapeHtml(qrLabel)}</div>
-      <div class="brand">Shanty Creek Resorts · The Kingdom</div>
-    </body></html>
-  `);
-  win.document.close();
-  win.onload = () => { win.focus(); win.print(); };
-}
-function printAllQrLabels(buses){
+// Standard label-sheet geometry. Both die-cut sizes share the same 4in label
+// width, side margins, and column gap — they only differ in label height /
+// row count, since that's how these Avery-family sheets are actually cut.
+const LABEL_TEMPLATES = {
+  avery5163: {
+    name: 'Avery 5163 / 8163 — 2" x 4" (10 per sheet)',
+    cols: 2, rows: 5, labelW: 4, labelH: 2,
+    sideMargin: 0.15625, topMargin: 0.5, colGap: 0.1875, rowGap: 0,
+    layout: 'horizontal', qrSize: 1.6
+  },
+  avery5164: {
+    name: 'Avery 5164 / 8164 — 3-1/3" x 4" (6 per sheet)',
+    cols: 2, rows: 3, labelW: 4, labelH: 3.33333,
+    sideMargin: 0.15625, topMargin: 0.5, colGap: 0.1875, rowGap: 0,
+    layout: 'vertical', qrSize: 1.7
+  },
+  avery22806: {
+    name: 'Avery 22806 / 8206 — 2" x 2" square (12 per sheet)',
+    cols: 3, rows: 4, labelW: 2, labelH: 2,
+    sideMargin: 1.05, topMargin: 1.2, colGap: 0.2, rowGap: 0.2,
+    layout: 'vertical', qrSize: 1.35, compact: true
+  },
+  fitall: { name: 'Quick print — fit as many as possible (plain paper, no label stock)' }
+};
+
+function printQrLabels(buses, labelSize){
+  if(!buses || !buses.length) return;
+  const tmpl = LABEL_TEMPLATES[labelSize] || LABEL_TEMPLATES.avery5163;
   const win = window.open('', '_blank');
   if(!win){ alert('Your browser blocked the print window — allow pop-ups for this site and try again.'); return; }
-  const labels = buses.map(b => {
+
+  function fields(b){
     const cat = categoryFor(b);
+    const loc = locationForBus(b);
     const qrLabel = checkModeFor(cat)==='shift' ? 'Scan for Start / End of Shift' : 'Scan to log a check';
-    return `
-      <div class="label">
-        <div class="id">${escapeHtml(b.id)}</div>
-        <div class="name">${escapeHtml(b.name||'')}</div>
-        <div class="type">${escapeHtml(cat.label)}</div>
-        <img src="${qrUrl(selfUrlFor(b.id), '300x300')}" alt="QR code">
-        <div class="sub">${escapeHtml(qrLabel)}</div>
-      </div>`;
-  }).join('');
-  win.document.write(`
-    <!DOCTYPE html><html><head><meta charset="UTF-8"><title>Equipment QR Codes</title>
-    <style>
+    return { cat, loc, qrLabel };
+  }
+
+  let styleHtml, bodyHtml;
+
+  if(labelSize === 'fitall'){
+    const labels = buses.map(b=>{
+      const {cat, qrLabel} = fields(b);
+      return `
+        <div class="label">
+          <div class="id">${escapeHtml(b.id)}</div>
+          <div class="name">${escapeHtml(b.name||'')}</div>
+          <div class="type">${escapeHtml(cat.label)}</div>
+          <img src="${qrUrl(selfUrlFor(b.id), '300x300')}" alt="QR code">
+          <div class="sub">${escapeHtml(qrLabel)}</div>
+        </div>`;
+    }).join('');
+    styleHtml = `
       body{font-family:system-ui,sans-serif; margin:0; padding:20px;}
       .grid{display:flex; flex-wrap:wrap; gap:0;}
       .label{width:33.33%; box-sizing:border-box; text-align:center; padding:20px 10px; page-break-inside:avoid; border:1px dashed #ccc;}
@@ -1923,8 +1931,80 @@ function printAllQrLabels(buses){
       img{width:170px; height:170px;}
       .sub{font-size:11px; font-weight:600; margin-top:8px;}
       @media print{ .label{border:1px solid #ddd;} }
-    </style></head>
-    <body><div class="grid">${labels}</div></body></html>
+    `;
+    bodyHtml = `<div class="grid">${labels}</div>`;
+  } else {
+    const perSheet = tmpl.cols * tmpl.rows;
+    const sheets = [];
+    for(let i=0;i<buses.length;i+=perSheet){ sheets.push(buses.slice(i, i+perSheet)); }
+
+    const cellHtml = (b) => {
+      const {cat, loc, qrLabel} = fields(b);
+      const img = `<img class="qr" src="${qrUrl(selfUrlFor(b.id), '300x300')}" alt="QR code">`;
+      const text = tmpl.compact ? `
+        <div class="text">
+          <div class="id">${escapeHtml(b.id)}</div>
+          <div class="caption">${escapeHtml(qrLabel)}</div>
+        </div>` : `
+        <div class="text">
+          <div class="id">${escapeHtml(b.id)}</div>
+          <div class="name">${escapeHtml(b.name||'')}</div>
+          <div class="type">${escapeHtml(cat.label)}${loc ? ' · '+escapeHtml(loc) : ''}</div>
+          <div class="caption">${escapeHtml(qrLabel)}</div>
+        </div>`;
+      return `<div class="label">${img}${text}</div>`;
+    };
+
+    bodyHtml = sheets.map(sheetBuses=>{
+      const cells = sheetBuses.map(cellHtml).join('');
+      return `<div class="sheet">${cells}</div>`;
+    }).join('');
+
+    const labelInner = tmpl.compact ? `
+      .label{ display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:0.08in; overflow:hidden; }
+      .label .qr{ width:${tmpl.qrSize}in; height:${tmpl.qrSize}in; margin-bottom:3px; }
+      .label .id{ font-size:13px; font-weight:800; line-height:1.05; }
+      .label .caption{ font-size:7px; font-weight:700; margin-top:2px; text-transform:uppercase; letter-spacing:.02em; }
+    ` : tmpl.layout === 'vertical' ? `
+      .label{ display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:0.12in; overflow:hidden; }
+      .label .qr{ width:${tmpl.qrSize}in; height:${tmpl.qrSize}in; margin-bottom:6px; }
+      .label .id{ font-size:22px; font-weight:800; line-height:1.1; }
+      .label .name{ font-size:12px; color:#444; margin-top:2px; }
+      .label .type{ font-size:10px; color:#888; text-transform:uppercase; letter-spacing:.04em; margin-top:2px; margin-bottom:6px; }
+      .label .caption{ font-size:11px; font-weight:700; margin-top:2px; }
+    ` : `
+      .label{ display:flex; flex-direction:row; align-items:center; padding:0.12in 0.18in; gap:0.15in; overflow:hidden; }
+      .label .qr{ flex:0 0 auto; width:${tmpl.qrSize}in; height:${tmpl.qrSize}in; }
+      .label .text{ flex:1 1 auto; min-width:0; overflow:hidden; }
+      .label .id{ font-size:18px; font-weight:800; line-height:1.15; }
+      .label .name{ font-size:10.5px; color:#444; margin-top:1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+      .label .type{ font-size:9px; color:#888; text-transform:uppercase; letter-spacing:.03em; margin-top:1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+      .label .caption{ font-size:9.5px; font-weight:700; margin-top:5px; }
+    `;
+
+    styleHtml = `
+      @page{ size: 8.5in 11in; margin:0; }
+      *{box-sizing:border-box;}
+      body{margin:0; font-family:system-ui,sans-serif; color:#222;}
+      .sheet{
+        width:8.5in; height:11in;
+        padding:${tmpl.topMargin}in ${tmpl.sideMargin}in;
+        display:grid;
+        grid-template-columns: repeat(${tmpl.cols}, ${tmpl.labelW}in);
+        grid-template-rows: repeat(${tmpl.rows}, ${tmpl.labelH}in);
+        column-gap:${tmpl.colGap}in; row-gap:${tmpl.rowGap}in;
+        justify-content:center;
+        page-break-after: always;
+      }
+      .sheet:last-child{ page-break-after:auto; }
+      ${labelInner}
+    `;
+  }
+
+  win.document.write(`
+    <!DOCTYPE html><html><head><meta charset="UTF-8"><title>Equipment QR Codes</title>
+    <style>${styleHtml}</style></head>
+    <body>${bodyHtml}</body></html>
   `);
   win.document.close();
   win.onload = () => { win.focus(); win.print(); };
@@ -2192,10 +2272,19 @@ function renderBusesTab(holder){
   sortSel.onchange = ()=>{ state.admin.busSort = sortSel.value; renderAdminTab(holder); };
   toolbar.appendChild(sortSel);
 
+  const labelSizeVal = state.admin.busLabelSize || 'avery5163';
+  const labelSizeSel = document.createElement('select');
+  labelSizeSel.innerHTML = Object.keys(LABEL_TEMPLATES).map(key=>`<option value="${key}">${escapeHtml(LABEL_TEMPLATES[key].name)}</option>`).join('');
+  labelSizeSel.value = labelSizeVal;
+  labelSizeSel.title = 'Label paper size used by the Print buttons below';
+  labelSizeSel.onchange = ()=>{ state.admin.busLabelSize = labelSizeSel.value; renderAdminTab(holder); };
+  toolbar.appendChild(document.createTextNode('Label size: '));
+  toolbar.appendChild(labelSizeSel);
+
   const printAllBtn = document.createElement('button');
   printAllBtn.className='btn btn-outline btn-sm';
   printAllBtn.textContent = 'Print all ' + visibleBuses.length + ' QR code' + (visibleBuses.length===1?'':'s');
-  printAllBtn.onclick = ()=> printAllQrLabels(visibleBuses);
+  printAllBtn.onclick = ()=> printQrLabels(visibleBuses, labelSizeVal);
   toolbar.appendChild(printAllBtn);
   holder.appendChild(toolbar);
 
@@ -2221,6 +2310,15 @@ function renderBusesTab(holder){
   bulkBar.appendChild(selectAllLabel);
 
   if(selectedVisibleCount > 0){
+    const printSelBtn = document.createElement('button');
+    printSelBtn.className='btn btn-outline btn-sm';
+    printSelBtn.textContent = 'Print ' + selectedVisibleCount + ' selected';
+    printSelBtn.onclick = ()=>{
+      const chosen = visibleBuses.filter(b=>selectedBusIds.has(b.id));
+      printQrLabels(chosen, labelSizeVal);
+    };
+    bulkBar.appendChild(printSelBtn);
+
     const delSelBtn = document.createElement('button');
     delSelBtn.className='btn btn-outline btn-sm';
     delSelBtn.style.color = 'var(--bad)'; delSelBtn.style.borderColor = 'var(--bad)';
@@ -2251,7 +2349,7 @@ function renderBusesTab(holder){
 
   const note = el('div','note');
   note.style.margin = '10px 2px 14px';
-  note.textContent = 'Print each QR code and post it on the equipment. Scanning it opens this app straight into that unit\'s form. Note: for QR codes to work from drivers\' phones, this page needs a permanent link — publish this artifact (Share) or host the file, then reload this tab so the QR codes point to that address.';
+  note.textContent = 'Print each QR code and post it on the equipment. Scanning it opens this app straight into that unit\'s form. Check the box on any unit(s) below to print just those — otherwise "Print all" prints everything shown. Pick a label size above first so the sheet lines up with your label paper. Note: for QR codes to work from drivers\' phones, this page needs a permanent link — publish this artifact (Share) or host the file, then reload this tab so the QR codes point to that address.';
   holder.appendChild(note);
 
   visibleBuses.forEach(b=>{
@@ -2305,7 +2403,7 @@ function renderBusesTab(holder){
     printBtn.textContent='Print';
     printBtn.style.display='block';
     printBtn.style.margin='8px auto 0';
-    printBtn.onclick = ()=> printQrLabel(b, cat);
+    printBtn.onclick = ()=> printQrLabels([b], labelSizeVal);
     box.appendChild(printBtn);
     qrs.appendChild(box);
     card.appendChild(qrs);
