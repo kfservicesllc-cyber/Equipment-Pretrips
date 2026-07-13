@@ -1874,24 +1874,24 @@ function statCard(num,label){
 // row count, since that's how these Avery-family sheets are actually cut.
 const LABEL_TEMPLATES = {
   avery5163: {
-    name: 'Avery 5163 / 8163 — 2" x 4" (10 per sheet)',
+    name: '2" x 4" (10/sheet) — Avery 5163',
     cols: 2, rows: 5, labelW: 4, labelH: 2,
     sideMargin: 0.15625, topMargin: 0.5, colGap: 0.1875, rowGap: 0,
     layout: 'horizontal', qrSize: 1.6
   },
   avery5164: {
-    name: 'Avery 5164 / 8164 — 3-1/3" x 4" (6 per sheet)',
+    name: '3-1/3" x 4" (6/sheet) — Avery 5164',
     cols: 2, rows: 3, labelW: 4, labelH: 3.33333,
     sideMargin: 0.15625, topMargin: 0.5, colGap: 0.1875, rowGap: 0,
     layout: 'vertical', qrSize: 1.7
   },
   avery22806: {
-    name: 'Avery 22806 / 8206 — 2" x 2" square (12 per sheet)',
+    name: '2" x 2" (12/sheet) — Avery 22806',
     cols: 3, rows: 4, labelW: 2, labelH: 2,
     sideMargin: 1.05, topMargin: 1.2, colGap: 0.2, rowGap: 0.2,
     layout: 'vertical', qrSize: 1.35, compact: true
   },
-  fitall: { name: 'Quick print — fit as many as possible (plain paper, no label stock)' }
+  fitall: { name: 'Quick print (plain paper)' }
 };
 
 function printQrLabels(buses, labelSize){
@@ -2278,7 +2278,7 @@ function renderBusesTab(holder){
   labelSizeSel.value = labelSizeVal;
   labelSizeSel.title = 'Label paper size used by the Print buttons below';
   labelSizeSel.onchange = ()=>{ state.admin.busLabelSize = labelSizeSel.value; renderAdminTab(holder); };
-  toolbar.appendChild(document.createTextNode('Label size: '));
+  toolbar.appendChild(document.createTextNode('Labels: '));
   toolbar.appendChild(labelSizeSel);
 
   const printAllBtn = document.createElement('button');
@@ -2292,6 +2292,7 @@ function renderBusesTab(holder){
   const visibleIds = visibleBuses.map(b=>b.id);
   const selectedVisibleCount = visibleIds.filter(id=>selectedBusIds.has(id)).length;
   const bulkBar = el('div','toolbar pin-top');
+  bulkBar.style.padding = '6px 2px 8px';
   const selectAllLabel = document.createElement('label');
   selectAllLabel.style.cssText = 'display:flex; align-items:center; gap:7px; font-size:13px; font-weight:600; color:var(--ink-soft); cursor:pointer;';
   const selectAllCb = document.createElement('input');
