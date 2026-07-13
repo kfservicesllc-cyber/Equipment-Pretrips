@@ -1656,8 +1656,19 @@ function renderLabelTemplatesCard(holder){
       parseStatus.textContent = '✗ ' + e.message;
       return;
     }
-    parseStatus.style.color = 'var(--ok)';
-    parseStatus.textContent = '✓ Detected ' + parsed.cols + ' × ' + parsed.rows + ' (' + (parsed.cols*parsed.rows) + ' per sheet). Review the fields below, then save.';
+    let msg;
+    if(parsed.cols && parsed.rows){
+      msg = 'Detected ' + parsed.cols + ' × ' + parsed.rows + ' (' + (parsed.cols*parsed.rows) + ' per sheet).';
+    } else {
+      msg = 'Couldn\'t fully auto-detect this layout.';
+    }
+    if(parsed.warnings && parsed.warnings.length){
+      parseStatus.style.color = 'var(--warn)';
+      parseStatus.textContent = '⚠ ' + msg + ' ' + parsed.warnings.join(' ') + ' Review the fields below, then save.';
+    } else {
+      parseStatus.style.color = 'var(--ok)';
+      parseStatus.textContent = '✓ ' + msg + ' Review the fields below, then save.';
+    }
     renderTemplateReviewForm(reviewWrap, parsed);
     reviewWrap.style.display = 'block';
   };
@@ -2255,6 +2266,19 @@ function humanizeTemplateFilename(filename){
     .trim();
 }
 
+function extractFirstTag(xml, tagName){
+  // Grabs the whole opening tag (e.g. "<w:pgSz w:h="15840" w:w="12240"/>") so attributes can
+  // be read out of it regardless of what order the document happens to write them in.
+  const re = new RegExp('<' + tagName + '\\b[^>]*/?>');
+  const m = xml.match(re);
+  return m ? m[0] : null;
+}
+function attrFromTag(tagStr, attrName){
+  if(!tagStr) return null;
+  const m = tagStr.match(new RegExp(attrName + '="([^"]*)"'));
+  return m ? m[1] : null;
+}
+
 async function parseAveryTemplateFile(file){
   if(!/\.docx$/i.test(file.name)){
     throw new Error('That\'s an old .doc file — this can only read the newer .docx format. Open it in Word or Google Docs and use "Save As" / "Download" → Word (.docx), then upload that instead.');
@@ -2268,31 +2292,51 @@ async function parseAveryTemplateFile(file){
   if(!docEntry) throw new Error('This doesn\'t look like a Word document (no word/document.xml found inside).');
   const xml = await docEntry.async('string');
 
-  const pgSzMatch = xml.match(/<w:pgSz\s+w:w="(\d+)"\s+w:h="(\d+)"/);
-  if(!pgSzMatch) throw new Error('Could not find a page size in this document.');
-  const pageW = parseInt(pgSzMatch[1], 10) / 1440;
-  const pageH = parseInt(pgSzMatch[2], 10) / 1440;
+  const warnings = [];
 
+  // Page size — fall back to a standard sheet rather than blocking entirely if this can't
+  // be read cleanly (attribute order, unexpected extra attributes, etc. vary between the
+  // tool that produced the file).
+  let pageW = 8.5, pageH = 11;
+  const pgSzTag = extractFirstTag(xml, 'w:pgSz');
+  const pgW = attrFromTag(pgSzTag, 'w:w');
+  const pgH = attrFromTag(pgSzTag, 'w:h');
+  if(pgW && pgH){
+    pageW = parseInt(pgW, 10) / 1440;
+    pageH = parseInt(pgH, 10) / 1440;
+  } else {
+    warnings.push('Couldn\'t read the page size from this file, so I assumed a standard 8.5" × 11" sheet.');
+  }
+
+  // Column grid
   const gridMatch = xml.match(/<w:tblGrid>([\s\S]*?)<\/w:tblGrid>/);
-  if(!gridMatch) throw new Error('Could not find a label table in this document — is this really an Avery label template?');
-  const colWidths = Array.from(gridMatch[1].matchAll(/w:w="(\d+)"/g)).map(m=>parseInt(m[1],10));
+  const colWidths = gridMatch ? Array.from(gridMatch[1].matchAll(/w:w="(\d+)"/g)).map(m=>parseInt(m[1],10)) : [];
+  if(!colWidths.length) warnings.push('Couldn\'t detect the column layout — fill in columns, label width, and column gap by hand below.');
 
-  const rowHeights = Array.from(xml.matchAll(/<w:trHeight\s+w:val="(\d+)"/g)).map(m=>parseInt(m[1],10));
-  if(!rowHeights.length) throw new Error('Could not find row heights in this document. You can still fill in the fields below by hand.');
+  // Row heights — extract each whole <w:trHeight .../> tag first so w:val can be pulled out
+  // regardless of what other attributes (w:hRule, etc.) sit alongside it or in what order.
+  const rowHeightTags = Array.from(xml.matchAll(/<w:trHeight\b[^>]*\/?>/g)).map(m=>m[0]);
+  const rowHeights = rowHeightTags.map(t=>attrFromTag(t, 'w:val')).filter(Boolean).map(v=>parseInt(v,10));
+  if(!rowHeights.length) warnings.push('Couldn\'t detect the row layout — fill in rows, label height, and row gap by hand below.');
 
-  const colAxis = detectLabelAxis(colWidths);
-  const rowAxis = detectLabelAxis(rowHeights);
+  const colAxis = colWidths.length ? detectLabelAxis(colWidths) : { count: 0, size: 0, gap: 0 };
+  const rowAxis = rowHeights.length ? detectLabelAxis(rowHeights) : { count: 0, size: 0, gap: 0 };
 
   const cols = colAxis.count, rows = rowAxis.count;
   const labelW = colAxis.size / 1440, labelH = rowAxis.size / 1440;
   const colGap = colAxis.gap / 1440, rowGap = rowAxis.gap / 1440;
 
-  const totalGridW = cols * labelW + (cols - 1) * colGap;
-  const totalGridH = rows * labelH + (rows - 1) * rowGap;
-  const sideMargin = Math.max(0, (pageW - totalGridW) / 2);
-  const topMargin = Math.max(0, (pageH - totalGridH) / 2);
+  let sideMargin = 0, topMargin = 0;
+  if(cols && labelW){
+    const totalGridW = cols * labelW + (cols - 1) * colGap;
+    sideMargin = Math.max(0, (pageW - totalGridW) / 2);
+  }
+  if(rows && labelH){
+    const totalGridH = rows * labelH + (rows - 1) * rowGap;
+    topMargin = Math.max(0, (pageH - totalGridH) / 2);
+  }
 
-  const smaller = Math.min(labelW, labelH);
+  const smaller = (labelW && labelH) ? Math.min(labelW, labelH) : Math.max(labelW, labelH, 2);
   const compact = smaller <= 2.3;
   const layout = labelW >= labelH ? 'horizontal' : 'vertical';
   let qrSize;
@@ -2301,14 +2345,16 @@ async function parseAveryTemplateFile(file){
   else qrSize = labelW * 0.45;
 
   return {
-    name: humanizeTemplateFilename(file.name) + ' (' + (cols*rows) + '/sheet)',
+    name: humanizeTemplateFilename(file.name) + (cols && rows ? ' (' + (cols*rows) + '/sheet)' : ''),
     cols, rows,
     labelW: round5(labelW), labelH: round5(labelH),
     sideMargin: round5(sideMargin), topMargin: round5(topMargin),
     colGap: round5(colGap), rowGap: round5(rowGap),
-    layout, qrSize: round5(qrSize), compact
+    layout, qrSize: round5(qrSize), compact,
+    warnings
   };
 }
+
 
 /* ---------- bulk equipment upload ---------- */
 let pendingImportRows = null;
