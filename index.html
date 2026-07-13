@@ -1642,11 +1642,6 @@ function renderAccountTab(holder){
 }
 
 function renderDepartmentsTab(holder){
-  const intro = el('div','note');
-  intro.style.margin = '2px 2px 14px';
-  intro.textContent = 'Departments sign in with a real account now, not a typed password. The database itself enforces that a department\'s login can only see and edit the equipment types assigned to it here — that\'s no longer just this page pretending not to show things.';
-  holder.appendChild(intro);
-
   const addCard = el('div','card pin-top');
   addCard.style.cssText = 'border-style:dashed; background:var(--cream); box-shadow:none;';
   addCard.innerHTML = '<div class="section-label">Add a new department</div>';
@@ -2318,6 +2313,111 @@ function renderBusesTab(holder){
   });
 }
 
+let pendingCatImportRows = null;
+
+function resolveTrackingUnit(raw){
+  const r = String(raw||'').trim().toLowerCase();
+  if(r==='hours' || r==='hour' || r==='hrs') return 'hours';
+  if(r==='miles' || r==='mile' || r==='mi') return 'miles';
+  if(r==='none' || r==='not tracked' || r==='not-tracked' || r==='untracked' || r==='no') return 'none';
+  return null;
+}
+function resolveCheckMode(raw){
+  const r = String(raw||'').trim().toLowerCase();
+  if(r==='daily' || r==='single daily / use check' || r==='single' || r==='use check' || r==='use') return 'daily';
+  if(r==='shift' || r==='start / end shift' || r==='start/end shift' || r==='start-end') return 'shift';
+  return null;
+}
+function trackingLabel(v){
+  return v==='hours' ? 'Hours' : v==='miles' ? 'Miles' : 'Not tracked';
+}
+function checkModeLabel(v){
+  return v==='shift' ? 'Start / End shift' : 'Single daily / use check';
+}
+function downloadCatCsvTemplate(){
+  const rows = [
+    ['Type Name','Tracking (Hours/Miles/Not tracked)','Workflow (Daily/Shift)','Checklist Items (optional, semicolon-separated)','Notify Email (optional)','PM Notify Email (optional)'],
+    ['Utility Cart','Hours','Daily','Fluid levels; Tires; Lights','','']
+  ];
+  const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const blob = new Blob([csv], {type:'text/csv'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'equipment-types-upload-template.csv'; a.click();
+  URL.revokeObjectURL(url);
+}
+function renderCatImportPreview(container, holder){
+  container.innerHTML = '';
+  if(!pendingCatImportRows || !pendingCatImportRows.length) return;
+
+  const okRows = pendingCatImportRows.filter(r=>r.status==='ok');
+  const errRows = pendingCatImportRows.filter(r=>r.status!=='ok');
+
+  const table = document.createElement('table');
+  table.innerHTML = '<thead><tr><th>Type Name</th><th>Tracking</th><th>Workflow</th><th>Checklist Items</th><th>Status</th></tr></thead>';
+  const tbody = document.createElement('tbody');
+  pendingCatImportRows.forEach(r=>{
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td><strong>${escapeHtml(r.label||'—')}</strong></td>
+      <td>${r.trackingUnit ? escapeHtml(trackingLabel(r.trackingUnit)) : escapeHtml(r.trackingRaw||'—')}</td>
+      <td>${r.checkMode ? escapeHtml(checkModeLabel(r.checkMode)) : escapeHtml(r.modeRaw||'—')}</td>
+      <td>${r.checklist && r.checklist.length ? escapeHtml(r.checklist.map(c=>c.label).join(', ')) : '<span class="note">defaults</span>'}</td>
+      <td>${r.status==='ok' ? '<span class="tag resolved">Will add</span>' : '<span class="tag open">'+escapeHtml(r.reason)+'</span>'}</td>`;
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  const scrollWrap = el('div','table-scroll');
+  scrollWrap.appendChild(table);
+  container.appendChild(scrollWrap);
+
+  const summary = el('div','note');
+  summary.style.margin = '10px 2px';
+  summary.textContent = okRows.length + ' type(s) will be added' + (errRows.length ? ', ' + errRows.length + ' skipped (fix and re-upload if needed)' : '') + '.';
+  container.appendChild(summary);
+
+  const btnRow = el('div');
+  btnRow.style.cssText = 'display:flex; gap:10px; flex-wrap:wrap;';
+  const confirmBtn = document.createElement('button');
+  confirmBtn.className='btn btn-gold'; confirmBtn.style.width='auto'; confirmBtn.style.padding='12px 20px';
+  confirmBtn.textContent = 'Import ' + okRows.length + ' type(s)';
+  confirmBtn.disabled = okRows.length === 0;
+  confirmBtn.onclick = async ()=>{
+    confirmBtn.disabled = true; confirmBtn.textContent = 'Importing...';
+    const prevCats = state.categories;
+    state.categories = state.categories.concat(okRows.map(r => {
+      const newCat = {
+        key: uid('cat'),
+        label: r.label,
+        trackingUnit: r.trackingUnit,
+        checkMode: r.checkMode,
+        checklist: (r.checklist && r.checklist.length) ? r.checklist : [
+          {key:'fluids', label:'Fluid levels'},
+          {key:'general', label:'General condition'}
+        ]
+      };
+      if(r.notifyEmail) newCat.notifyEmail = r.notifyEmail;
+      if(r.pmNotifyEmail) newCat.pmNotifyEmail = r.pmNotifyEmail;
+      if(!isFullAdmin()) newCat.department = state.currentDepartmentKey;
+      return newCat;
+    }));
+    const ok = await saveCategories();
+    if(!ok){
+      state.categories = prevCats;
+      alert('Could not save these types.' + (lastStorageError ? '\n\nDetails: ' + lastStorageError : ''));
+      confirmBtn.disabled = false; confirmBtn.textContent = 'Import ' + okRows.length + ' type(s)';
+      return;
+    }
+    pendingCatImportRows = null;
+    renderAdminTab(holder);
+  };
+  btnRow.appendChild(confirmBtn);
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className='btn btn-outline'; cancelBtn.textContent='Cancel';
+  cancelBtn.onclick = ()=>{ pendingCatImportRows = null; renderAdminTab(holder); };
+  btnRow.appendChild(cancelBtn);
+  container.appendChild(btnRow);
+}
+
 function renderEquipmentTypesTab(holder){
   const intro = el('div','note');
   intro.style.margin = '2px 2px 14px';
@@ -2368,6 +2468,73 @@ function renderEquipmentTypesTab(holder){
   addRow.appendChild(addCatBtn);
   addCatCard.appendChild(addRow);
   holder.appendChild(addCatCard);
+
+  const catUploadCard = el('div','card');
+  catUploadCard.innerHTML = '<div class="section-label">Or upload a CSV</div>';
+  const catUploadDesc = el('div','note');
+  catUploadDesc.style.marginBottom = '12px';
+  catUploadDesc.textContent = 'Six columns: Type Name, Tracking (Hours/Miles/Not tracked), Workflow (Daily/Shift), Checklist Items (optional, semicolon-separated — leave blank to use the default "Fluid levels; General condition"), Notify Email (optional), PM Notify Email (optional). One row per type.';
+  catUploadCard.appendChild(catUploadDesc);
+
+  const catUploadRow = el('div');
+  catUploadRow.style.cssText = 'display:flex; gap:10px; flex-wrap:wrap; align-items:center;';
+  const catTemplateBtn = document.createElement('button');
+  catTemplateBtn.className='btn btn-outline btn-sm'; catTemplateBtn.textContent='Download CSV template';
+  catTemplateBtn.onclick = downloadCatCsvTemplate;
+  catUploadRow.appendChild(catTemplateBtn);
+
+  const catFileInput = document.createElement('input');
+  catFileInput.type = 'file'; catFileInput.accept = '.csv,text/csv';
+  catFileInput.id = 'cat-csv-upload-input';
+  catUploadRow.appendChild(catFileInput);
+  catUploadCard.appendChild(catUploadRow);
+
+  const catPreviewContainer = el('div');
+  catPreviewContainer.style.marginTop = '14px';
+  catUploadCard.appendChild(catPreviewContainer);
+
+  catFileInput.onchange = (e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev)=>{
+      const rows = parseCsv(String(ev.target.result));
+      if(!rows.length){ alert('That file looks empty.'); return; }
+      let dataRows = rows;
+      const first = rows[0].map(x=>String(x).trim().toLowerCase());
+      if(first[0]==='type name' || first[0]==='name') dataRows = rows.slice(1);
+
+      const seenLabels = new Set(state.categories.map(c=>c.label.trim().toLowerCase()));
+      const seenInFile = new Set();
+      pendingCatImportRows = dataRows.filter(r=>r.some(c=>String(c).trim()!=='')).map(r=>{
+        const label = String(r[0]||'').trim();
+        const trackingRaw = String(r[1]||'').trim();
+        const modeRaw = String(r[2]||'').trim();
+        const checklistRaw = String(r[3]||'').trim();
+        const notifyEmail = String(r[4]||'').trim();
+        const pmNotifyEmail = String(r[5]||'').trim();
+
+        const trackingUnit = resolveTrackingUnit(trackingRaw);
+        const checkMode = resolveCheckMode(modeRaw);
+        const checklist = checklistRaw ? checklistRaw.split(';').map(s=>s.trim()).filter(Boolean).map(l=>({key: uid('chk'), label:l})) : [];
+        const dupKey = label.toLowerCase();
+
+        let status='ok', reason='';
+        if(!label){ status='error'; reason='Missing type name'; }
+        else if(seenLabels.has(dupKey)){ status='error'; reason='Type already exists'; }
+        else if(seenInFile.has(dupKey)){ status='error'; reason='Duplicate in file'; }
+        else if(!trackingUnit){ status='error'; reason='Unknown tracking "'+trackingRaw+'"'; }
+        else if(!checkMode){ status='error'; reason='Unknown workflow "'+modeRaw+'"'; }
+        if(status==='ok') seenInFile.add(dupKey);
+        return {label, trackingRaw, trackingUnit, modeRaw, checkMode, checklist, notifyEmail, pmNotifyEmail, status, reason};
+      });
+      renderCatImportPreview(catPreviewContainer, holder);
+    };
+    reader.readAsText(file);
+  };
+
+  if(pendingCatImportRows) renderCatImportPreview(catPreviewContainer, holder);
+  holder.appendChild(catUploadCard);
 
   const typeSearchVal = state.admin.typesSearch || '';
   const typeSortVal = state.admin.typesSort || 'default';
