@@ -1796,21 +1796,64 @@ function renderOverview(holder, allShifts){
   stats.appendChild(ui);
   holder.appendChild(stats);
 
+  if(myBuses.length){
+    // Enrich each unit with its category, last shift record, and out-of-service flag
+    // up front so every sort option below (including Status and Last shift) has what it needs.
+    var enriched = myBuses.map(b=>{
+      const arr = state.shiftsCache[b.id] || [];
+      const sorted = [...arr].sort((a,x)=> new Date(x.timestamp)-new Date(a.timestamp));
+      const last = sorted[0] || null;
+      const cat = categoryFor(b);
+      const hasUrgent = arr.some(s => !s.issuesResolved && recordHasUrgent(s, cat));
+      return {b, cat, last, hasUrgent};
+    });
+
+    const locationVal = state.admin.overviewLocationFilter || 'all';
+    if(locationVal!=='all') enriched = enriched.filter(x => locationForBus(x.b)===locationVal);
+
+    const sortVal = state.admin.overviewSort || 'location';
+    enriched.sort((x,y)=>{
+      if(sortVal==='id') return x.b.id.localeCompare(y.b.id, undefined, {numeric:true});
+      if(sortVal==='type') return x.cat.label.localeCompare(y.cat.label) || x.b.id.localeCompare(y.b.id, undefined, {numeric:true});
+      if(sortVal==='status') return (y.hasUrgent - x.hasUrgent) || x.b.id.localeCompare(y.b.id, undefined, {numeric:true});
+      if(sortVal==='lastshift'){
+        const xt = x.last ? new Date(x.last.timestamp).getTime() : -Infinity;
+        const yt = y.last ? new Date(y.last.timestamp).getTime() : -Infinity;
+        return yt - xt || x.b.id.localeCompare(y.b.id, undefined, {numeric:true});
+      }
+      return locationForBus(x.b).localeCompare(locationForBus(y.b)) || x.b.id.localeCompare(y.b.id, undefined, {numeric:true});
+    });
+
+    const toolbar = el('div','toolbar pin-top');
+    const locSel = document.createElement('select');
+    locSel.innerHTML = '<option value="all">All locations</option>' + LOCATIONS.map(l=>`<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('');
+    locSel.value = locationVal;
+    locSel.onchange = ()=>{ state.admin.overviewLocationFilter = locSel.value; renderAdminTab(holder); };
+    toolbar.appendChild(document.createTextNode('Location: '));
+    toolbar.appendChild(locSel);
+
+    const sortSel = document.createElement('select');
+    sortSel.innerHTML = '<option value="location">Sort: Location</option><option value="id">Sort: ID</option>' +
+      '<option value="type">Sort: Type</option><option value="status">Sort: Status (out of service first)</option>' +
+      '<option value="lastshift">Sort: Last shift (most recent first)</option>';
+    sortSel.value = sortVal;
+    sortSel.onchange = ()=>{ state.admin.overviewSort = sortSel.value; renderAdminTab(holder); };
+    toolbar.appendChild(document.createTextNode('Sort by: '));
+    toolbar.appendChild(sortSel);
+    holder.appendChild(toolbar);
+  }
+
   const card = el('div','card');
   card.innerHTML = '<div class="section-label">Current status by equipment</div>';
   if(!myBuses.length){
     card.appendChild(el('div','empty','No equipment added yet — go to "Equipment & QR Codes" to add your fleet.'));
+  } else if(!enriched.length){
+    card.appendChild(el('div','empty','No equipment at this location.'));
   } else {
     const table = document.createElement('table');
     table.innerHTML = '<thead><tr><th>ID</th><th>Name</th><th>Type</th><th>Location</th><th>Last reading</th><th>Last shift</th><th>Status</th></tr></thead>';
     const tbody = document.createElement('tbody');
-    const sortedBuses = myBuses.slice().sort((a,b)=> locationForBus(a).localeCompare(locationForBus(b)) || a.id.localeCompare(b.id, undefined, {numeric:true}));
-    sortedBuses.forEach(b=>{
-      const arr = state.shiftsCache[b.id] || [];
-      const sorted = [...arr].sort((a,x)=> new Date(x.timestamp)-new Date(a.timestamp));
-      const last = sorted[0];
-      const cat = categoryFor(b);
-      const hasUrgent = arr.some(s => !s.issuesResolved && recordHasUrgent(s, cat));
+    enriched.forEach(({b, cat, last, hasUrgent})=>{
       const tr = document.createElement('tr');
       tr.innerHTML = `<td><strong>${escapeHtml(b.id)}</strong></td><td>${escapeHtml(b.name||'—')}</td><td>${escapeHtml(cat.label)}</td><td>${escapeHtml(locationForBus(b))}</td>` +
         `<td class="mono">${last && last.mileage!=null ? last.mileage.toLocaleString()+' '+unitLabel(cat.trackingUnit) : '—'}</td>` +
