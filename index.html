@@ -391,6 +391,26 @@ async function sendPmNotification(bus, driver, mileage, timestamp, dueItems){
 
 
 const ISSUE_CATEGORIES = ['Brakes','Engine','Transmission','A/C · Heat','Tires / Tracks','Lights · Electrical','Hydraulics','Cutting Unit / Reels','Winch / Cable','PTO / Attachments','Body · Exterior','Fluids / Leak','Other'];
+// Official Shanty Creek Resorts department list (code - name), used for the Department field on every shift/checklist form.
+const OFFICIAL_DEPARTMENTS = [
+  '002 - Rooms',
+  '011 - Summit (F&B)',
+  '012 - Schuss (F&B)',
+  '013 - Cedar (F&B)',
+  "014 - Arnie's (F&B)",
+  '030 - IT',
+  '040 - Transportation',
+  '055 - Summit Golf',
+  '056 - Schuss Golf',
+  '057 - Cedar River Golf',
+  '058 - Legend Golf',
+  '059 - Hawks Eye Golf',
+  '060 - Schuss Mountain (Ski)',
+  '240 - Sales and Marketing',
+  '250 - Building Maintenance',
+  '255 - Grounds',
+  '290 - Laundry'
+];
 
 function defaultCategories(){
   return [
@@ -1000,6 +1020,18 @@ function renderShiftForm(wrap){
   fName.appendChild(nameInput);
   form.appendChild(fName);
 
+  // Department
+  const fDept = el('div','field');
+  fDept.innerHTML = '<label>Department</label>';
+  const deptSel = document.createElement('select');
+  deptSel.id = 'drv-dept';
+  const deptPlaceholder = document.createElement('option');
+  deptPlaceholder.value = ''; deptPlaceholder.textContent = 'Select department...';
+  deptSel.appendChild(deptPlaceholder);
+  OFFICIAL_DEPARTMENTS.forEach(d=>{ const o=document.createElement('option'); o.value=d; o.textContent=d; deptSel.appendChild(o); });
+  fDept.appendChild(deptSel);
+  form.appendChild(fDept);
+
   // Odometer / hour meter (skipped for equipment with no meter, e.g. trailers)
   if(cat.trackingUnit !== 'none'){
     const fOdo = el('div','field');
@@ -1136,11 +1168,14 @@ function renderIssueRows(container){
 async function submitShift(bus, action, btn){
   const cat = categoryFor(bus);
   const name = document.getElementById('drv-name').value.trim();
+  const deptEl = document.getElementById('drv-dept');
+  const department = deptEl ? deptEl.value : '';
   const odoEl = document.getElementById('drv-odo');
   const notesEl = document.getElementById('drv-notes');
   const notes = notesEl ? notesEl.value.trim() : '';
 
   if(!name){ alert('Please enter the driver name.'); return; }
+  if(!department){ alert('Please select a department.'); return; }
 
   let mileage = null;
   if(cat.trackingUnit !== 'none'){
@@ -1164,7 +1199,7 @@ async function submitShift(bus, action, btn){
     id: uid('shift'),
     busId: bus.id,
     busName: bus.name || '',
-    action, driver: name, mileage,
+    action, driver: name, department, mileage,
     timestamp: new Date().toISOString(),
     notes,
     preTrip: hasChecklist ? JSON.parse(JSON.stringify(formPreTrip)) : undefined,
@@ -3557,7 +3592,7 @@ function renderLogTab(holder, all){
     card.appendChild(el('div','empty','No shift logs yet.'));
   } else {
     const table = document.createElement('table');
-    table.innerHTML = '<thead><tr><th>When</th><th>Equipment</th><th>Driver</th><th>Action</th><th>Reading</th><th>Issues</th><th>Notes</th><th></th></tr></thead>';
+    table.innerHTML = '<thead><tr><th>When</th><th>Equipment</th><th>Driver</th><th>Department</th><th>Action</th><th>Reading</th><th>Issues</th><th>Notes</th><th></th></tr></thead>';
     const tbody = document.createElement('tbody');
     filtered.forEach(s=>{
       const tr = document.createElement('tr');
@@ -3581,6 +3616,7 @@ function renderLogTab(holder, all){
       tr.innerHTML = `<td>${fmtDT(s.timestamp)}</td>
         <td><strong>${escapeHtml(s.busId)}</strong></td>
         <td>${escapeHtml(s.driver)}</td>
+        <td>${escapeHtml(s.department||'—')}</td>
         <td>${actionTag}</td>
         <td class="mono">${s.mileage!=null ? s.mileage.toLocaleString()+' '+sUnit : '—'}</td>
         <td>${issueCell}</td>
@@ -3609,12 +3645,12 @@ function renderLogTab(holder, all){
 }
 
 function exportCsv(all){
-  const rows = [['Timestamp','Bus','Driver','Action','Odometer','Failed Checks','Issue Count','Urgent','Notes']];
+  const rows = [['Timestamp','Bus','Driver','Department','Action','Odometer','Failed Checks','Issue Count','Urgent','Notes']];
   all.forEach(s=>{
     const cat = categoryFor(state.buses.find(b=>b.id===s.busId) || {id:s.busId});
     const failCount = s.preTrip ? Object.values(s.preTrip).filter(c=>c.status==='fail').length : 0;
     rows.push([
-      s.timestamp, s.busId, s.driver, s.action, (s.mileage!=null ? s.mileage : ''),
+      s.timestamp, s.busId, s.driver, (s.department||''), s.action, (s.mileage!=null ? s.mileage : ''),
       failCount,
       (s.issues||[]).length,
       recordHasUrgent(s, cat) ? 'YES' : 'NO',
