@@ -185,7 +185,7 @@
      stacking multiple pinned bars in the same tab one below the other. */
   .pin-top{position:sticky; z-index:12;}
   .card.pin-top{background:var(--paper);}
-  .toolbar.pin-top{background:var(--cream); padding:10px 2px 14px; margin-bottom:0;}
+  .toolbar.pin-top{background:var(--cream); padding:8px 2px 10px; margin-bottom:0;}
   /* A list sitting below the pinned add/sort bars in a tab. sizeScrollLists() (JS) gives it
      its own height (filling whatever viewport space is left under the pinned stack) and its
      own scrollbar, so paging through a long list doesn't require scrolling past the pinned
@@ -2827,11 +2827,37 @@ function renderBusesTab(holder){
   }
 
   const quickAddCard = el('div', cartsOnly ? 'card pin-top' : 'card');
-  quickAddCard.innerHTML = '<div class="section-label">Quick-add numbered equipment</div>';
+  if(cartsOnly) quickAddCard.style.padding = '12px 14px';
+  const quickHead = el('div');
+  quickHead.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px;';
+  quickHead.innerHTML = '<div class="section-label" style="margin-bottom:0;">Quick-add numbered equipment</div>';
+  quickAddCard.appendChild(quickHead);
+  let quickTarget = quickAddCard;
+  if(cartsOnly){
+    // Collapsed by default so this card is just a thin header bar most of the time, leaving
+    // the equipment list below with far more room. Tapping the header (or the button) opens
+    // it back up to add units, and it stays open until collapsed again.
+    quickHead.style.cursor = 'pointer';
+    const quickToggle = document.createElement('button');
+    quickToggle.className = 'btn-link';
+    quickToggle.style.cssText = 'padding:0; font-size:12.5px; flex:none;';
+    const quickBody = el('div'); quickBody.style.marginTop = '12px';
+    const setQuickOpen = (open)=>{
+      state.admin.cartQuickOpen = open;
+      quickBody.style.display = open ? 'block' : 'none';
+      quickToggle.textContent = open ? 'Hide' : 'Add units';
+    };
+    quickToggle.onclick = (e)=>{ e.stopPropagation(); setQuickOpen(!state.admin.cartQuickOpen); };
+    quickHead.onclick = ()=> setQuickOpen(!state.admin.cartQuickOpen);
+    quickHead.appendChild(quickToggle);
+    quickAddCard.appendChild(quickBody);
+    setQuickOpen(!!state.admin.cartQuickOpen);
+    quickTarget = quickBody;
+  }
   const quickDesc = el('div','note');
   quickDesc.style.marginBottom = '12px';
   quickDesc.textContent = 'Add a batch of units at once by number — built for things like golf carts. Enter numbers and/or ranges separated by commas (e.g. "701-715, 720, 725-728"). Each becomes its own unit ID, tagged with the location and type picked below.';
-  quickAddCard.appendChild(quickDesc);
+  quickTarget.appendChild(quickDesc);
 
   const qaRow = el('div');
   qaRow.style.cssText = 'display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;';
@@ -2849,14 +2875,14 @@ function renderBusesTab(holder){
   myCats.forEach(c => { const o=document.createElement('option'); o.value=c.key; o.textContent=c.label; qaCatSelect.appendChild(o); });
   qaCatField.appendChild(qaCatSelect);
   qaRow.appendChild(qaCatField);
-  quickAddCard.appendChild(qaRow);
+  quickTarget.appendChild(qaRow);
 
   const qaNumsField = el('div','field'); qaNumsField.style.marginTop='10px'; qaNumsField.style.marginBottom='0';
   qaNumsField.innerHTML = '<label>Numbers / ranges</label>';
   const qaNumsInput = document.createElement('input');
   qaNumsInput.type='text'; qaNumsInput.id='qa-nums'; qaNumsInput.placeholder='e.g. 701-715, 720, 725-728';
   qaNumsField.appendChild(qaNumsInput);
-  quickAddCard.appendChild(qaNumsField);
+  quickTarget.appendChild(qaNumsField);
 
   const qaBtn = document.createElement('button');
   qaBtn.className='btn btn-primary'; qaBtn.style.width='auto'; qaBtn.style.padding='12px 20px'; qaBtn.style.marginTop='12px';
@@ -2884,11 +2910,12 @@ function renderBusesTab(holder){
     if(dupes.length) alert('Added ' + toAdd.length + ' unit(s). Skipped ' + dupes.length + ' that already existed: ' + dupes.join(', '));
     renderAdminTab(holder);
   };
-  quickAddCard.appendChild(qaBtn);
+  quickTarget.appendChild(qaBtn);
   if(!myCats.length){
-    quickAddCard.appendChild(el('div','note', isFullAdmin() ? 'No equipment types yet — set some up in Admin → Equipment Types first.' : 'No equipment types are assigned to your department yet — ask an admin to assign one in Equipment Types.'));
+    quickTarget.appendChild(el('div','note', isFullAdmin() ? 'No equipment types yet — set some up in Admin → Equipment Types first.' : 'No equipment types are assigned to your department yet — ask an admin to assign one in Equipment Types.'));
   }
   holder.appendChild(quickAddCard);
+
 
   // CSV upload is per-row (ID, Name, Type) and duplicates what Quick-add already covers for
   // cart-only departments, so it's hidden there.
@@ -2956,11 +2983,34 @@ function renderBusesTab(holder){
   }
 
   const areaCard = el('div', cartsOnly ? 'card pin-top' : 'card');
-  areaCard.innerHTML = '<div class="section-label">Storage Area QR Codes</div>';
+  if(cartsOnly) areaCard.style.padding = '12px 14px';
+  const areaHead = el('div');
+  areaHead.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px;';
+  areaHead.innerHTML = '<div class="section-label" style="margin-bottom:0;">Storage Area QR Codes</div>';
+  areaCard.appendChild(areaHead);
+  let areaTarget = areaCard;
+  if(cartsOnly){
+    areaHead.style.cursor = 'pointer';
+    const areaToggle = document.createElement('button');
+    areaToggle.className = 'btn-link';
+    areaToggle.style.cssText = 'padding:0; font-size:12.5px; flex:none;';
+    const areaBody = el('div'); areaBody.style.marginTop = '12px';
+    const setAreaOpen = (open)=>{
+      state.admin.cartAreaOpen = open;
+      areaBody.style.display = open ? 'block' : 'none';
+      areaToggle.textContent = open ? 'Hide' : 'Print storage QR';
+    };
+    areaToggle.onclick = (e)=>{ e.stopPropagation(); setAreaOpen(!state.admin.cartAreaOpen); };
+    areaHead.onclick = ()=> setAreaOpen(!state.admin.cartAreaOpen);
+    areaHead.appendChild(areaToggle);
+    areaCard.appendChild(areaBody);
+    setAreaOpen(!!state.admin.cartAreaOpen);
+    areaTarget = areaBody;
+  }
   const areaDesc = el('div','note');
   areaDesc.style.marginBottom = '12px';
   areaDesc.textContent = 'Post one shared QR code per storage area (e.g. a cart barn) instead of printing one per unit. Scanning it shows a dropdown to pick the specific unit number, then continues into the normal check form.';
-  areaCard.appendChild(areaDesc);
+  areaTarget.appendChild(areaDesc);
 
   const areaRow = el('div');
   areaRow.style.cssText = 'display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;';
@@ -2983,7 +3033,7 @@ function renderBusesTab(holder){
   areaGoBtn.className='btn btn-primary'; areaGoBtn.style.width='auto'; areaGoBtn.style.padding='12px 20px'; areaGoBtn.textContent='Print storage area QR code';
   areaGoBtn.onclick = ()=> printAreaQrLabel(areaLocSelect.value, areaCatSelect.value);
   areaRow.appendChild(areaGoBtn);
-  areaCard.appendChild(areaRow);
+  areaTarget.appendChild(areaRow);
 
   const areaCountNote = el('div','note'); areaCountNote.style.margin = '10px 2px 0';
   function updateAreaCount(){
@@ -2994,7 +3044,7 @@ function renderBusesTab(holder){
   areaLocSelect.onchange = updateAreaCount;
   areaCatSelect.onchange = updateAreaCount;
   updateAreaCount();
-  areaCard.appendChild(areaCountNote);
+  areaTarget.appendChild(areaCountNote);
 
   holder.appendChild(areaCard);
 
@@ -3062,7 +3112,7 @@ function renderBusesTab(holder){
   const visibleIds = visibleBuses.map(b=>b.id);
   const selectedVisibleCount = visibleIds.filter(id=>selectedBusIds.has(id)).length;
   const bulkBar = el('div','toolbar pin-top');
-  bulkBar.style.padding = '6px 2px 8px';
+  bulkBar.style.padding = '5px 2px 6px';
   const selectAllLabel = document.createElement('label');
   selectAllLabel.style.cssText = 'display:flex; align-items:center; gap:7px; font-size:13px; font-weight:600; color:var(--ink-soft); cursor:pointer;';
   const selectAllCb = document.createElement('input');
