@@ -1684,18 +1684,28 @@ function positionPinned(){
   if(!holder) return;
   const topbarEl = document.querySelector('.topbar');
   const tabsEl = document.querySelector('.tabs2');
-  let running = (topbarEl ? topbarEl.offsetHeight : 0) + (tabsEl ? tabsEl.offsetHeight : 0);
+  const baseline = (topbarEl ? topbarEl.offsetHeight : 0) + (tabsEl ? tabsEl.offsetHeight : 0);
+  // flowHeight: total height of everything above the current point in normal (unscrolled)
+  // document flow — used to size .scroll-list, since that's genuinely how much viewport
+  // space is used up before the user scrolls at all.
+  // stackHeight: height of only the OTHER pin-top bars stacked above this point — used as
+  // a pin-top element's sticky "top" offset, since plain (non-sticky) content between two
+  // pinned bars scrolls away for good and shouldn't be baked into a later bar's stuck
+  // position (that previously left a permanent gap under the second bar once scrolled past).
+  let flowHeight = baseline;
+  let stackHeight = baseline;
   Array.from(holder.children).forEach(child => {
     if(child.classList.contains('pin-top')){
-      child.style.top = running + 'px';
-      running += child.offsetHeight;
+      child.style.top = stackHeight + 'px';
+      stackHeight += child.offsetHeight;
+      flowHeight += child.offsetHeight;
     } else if(child.classList.contains('scroll-list')){
-      const available = window.innerHeight - running - 16;
+      const available = window.innerHeight - flowHeight - 16;
       child.style.maxHeight = Math.max(240, available) + 'px';
-      // Its own height is capped/scrollable now, so it doesn't add to the running total —
+      // Its own height is capped/scrollable now, so it doesn't add to either total —
       // nothing in these tabs currently follows a .scroll-list, but this keeps it safe if it does.
     } else {
-      running += child.offsetHeight;
+      flowHeight += child.offsetHeight;
     }
   });
 }
