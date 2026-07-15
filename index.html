@@ -2717,60 +2717,67 @@ function renderImportPreview(container, holder){
 }
 
 function renderBusesTab(holder){
-  const addCard = el('div','card pin-top');
-  addCard.innerHTML = '<div class="section-label">Add equipment</div>';
-  const row = el('div');
-  row.style.display='flex'; row.style.gap='10px'; row.style.flexWrap='wrap'; row.style.alignItems='flex-end';
-  row.innerHTML = `
-    <div class="field" style="min-width:100px; margin-bottom:0;"><label>ID</label><input type="text" id="new-bus-id" placeholder="e.g. SH-3"></div>
-    <div class="field" style="flex:1; min-width:160px; margin-bottom:0;"><label>Name</label><input type="text" id="new-bus-name" placeholder="e.g. Cedar River shuttle"></div>
-  `;
   const myCats = categoriesForCurrentUser();
-  const catField = el('div','field'); catField.style.minWidth='170px'; catField.style.marginBottom='0';
-  catField.innerHTML = '<label>Type</label>';
-  const catSelect = document.createElement('select'); catSelect.id='new-bus-cat';
-  myCats.forEach(c => { const o=document.createElement('option'); o.value=c.key; o.textContent=c.label; catSelect.appendChild(o); });
-  catField.appendChild(catSelect);
-  row.appendChild(catField);
+  // Departments scoped only to cart-type equipment (e.g. a "Carts" department) don't need
+  // the one-at-a-time Add equipment form — carts are always added as a numbered batch, so
+  // just the Quick-add numbered equipment card below covers it.
+  const cartsOnly = !isFullAdmin() && myCats.length>0 && myCats.every(c => /cart/i.test(c.label));
 
-  const locField = el('div','field'); locField.style.minWidth='170px'; locField.style.marginBottom='0';
-  locField.innerHTML = '<label>Location</label>';
-  const locSelect = document.createElement('select'); locSelect.id='new-bus-loc';
-  const autoOpt = document.createElement('option'); autoOpt.value=''; autoOpt.textContent='Auto (from ID)';
-  locSelect.appendChild(autoOpt);
-  LOCATIONS.forEach(l => { const o=document.createElement('option'); o.value=l; o.textContent=l; locSelect.appendChild(o); });
-  locField.appendChild(locSelect);
-  row.appendChild(locField);
+  if(!cartsOnly){
+    const addCard = el('div','card pin-top');
+    addCard.innerHTML = '<div class="section-label">Add equipment</div>';
+    const row = el('div');
+    row.style.display='flex'; row.style.gap='10px'; row.style.flexWrap='wrap'; row.style.alignItems='flex-end';
+    row.innerHTML = `
+      <div class="field" style="min-width:100px; margin-bottom:0;"><label>ID</label><input type="text" id="new-bus-id" placeholder="e.g. SH-3"></div>
+      <div class="field" style="flex:1; min-width:160px; margin-bottom:0;"><label>Name</label><input type="text" id="new-bus-name" placeholder="e.g. Cedar River shuttle"></div>
+    `;
+    const catField = el('div','field'); catField.style.minWidth='170px'; catField.style.marginBottom='0';
+    catField.innerHTML = '<label>Type</label>';
+    const catSelect = document.createElement('select'); catSelect.id='new-bus-cat';
+    myCats.forEach(c => { const o=document.createElement('option'); o.value=c.key; o.textContent=c.label; catSelect.appendChild(o); });
+    catField.appendChild(catSelect);
+    row.appendChild(catField);
 
-  const addBtn = document.createElement('button');
-  addBtn.className='btn btn-primary'; addBtn.style.width='auto'; addBtn.style.padding='12px 20px'; addBtn.textContent='Add equipment';
-  addBtn.onclick = async ()=>{
-    const idInput = document.getElementById('new-bus-id');
-    const nameInput = document.getElementById('new-bus-name');
-    const id = idInput.value.trim();
-    if(!id){ alert('Enter an ID.'); return; }
-    if(state.buses.some(b=>b.id===id)){ alert('That ID already exists.'); return; }
-    addBtn.disabled = true; addBtn.textContent = 'Saving...';
-    const newBus = {id, name: nameInput.value.trim(), category: catSelect.value};
-    if(locSelect.value) newBus.location = locSelect.value;
-    state.buses.push(newBus);
-    const ok = await saveBuses();
-    if(!ok){
-      state.buses = state.buses.filter(b=>b.id!==id); // roll back, it didn't actually persist
-      addBtn.disabled = false; addBtn.textContent = 'Add equipment';
-      alert('Could not save this unit.' + (lastStorageError ? '\n\nDetails: ' + lastStorageError : ''));
-      return;
+    const locField = el('div','field'); locField.style.minWidth='170px'; locField.style.marginBottom='0';
+    locField.innerHTML = '<label>Location</label>';
+    const locSelect = document.createElement('select'); locSelect.id='new-bus-loc';
+    const autoOpt = document.createElement('option'); autoOpt.value=''; autoOpt.textContent='Auto (from ID)';
+    locSelect.appendChild(autoOpt);
+    LOCATIONS.forEach(l => { const o=document.createElement('option'); o.value=l; o.textContent=l; locSelect.appendChild(o); });
+    locField.appendChild(locSelect);
+    row.appendChild(locField);
+
+    const addBtn = document.createElement('button');
+    addBtn.className='btn btn-primary'; addBtn.style.width='auto'; addBtn.style.padding='12px 20px'; addBtn.textContent='Add equipment';
+    addBtn.onclick = async ()=>{
+      const idInput = document.getElementById('new-bus-id');
+      const nameInput = document.getElementById('new-bus-name');
+      const id = idInput.value.trim();
+      if(!id){ alert('Enter an ID.'); return; }
+      if(state.buses.some(b=>b.id===id)){ alert('That ID already exists.'); return; }
+      addBtn.disabled = true; addBtn.textContent = 'Saving...';
+      const newBus = {id, name: nameInput.value.trim(), category: catSelect.value};
+      if(locSelect.value) newBus.location = locSelect.value;
+      state.buses.push(newBus);
+      const ok = await saveBuses();
+      if(!ok){
+        state.buses = state.buses.filter(b=>b.id!==id); // roll back, it didn't actually persist
+        addBtn.disabled = false; addBtn.textContent = 'Add equipment';
+        alert('Could not save this unit.' + (lastStorageError ? '\n\nDetails: ' + lastStorageError : ''));
+        return;
+      }
+      renderAdminTab(holder);
+    };
+    row.appendChild(addBtn);
+    addCard.appendChild(row);
+    if(!myCats.length){
+      addCard.appendChild(el('div','note', isFullAdmin() ? 'No equipment types yet — set some up in Admin → Equipment Types first.' : 'No equipment types are assigned to your department yet — ask an admin to assign one in Equipment Types.'));
     }
-    renderAdminTab(holder);
-  };
-  row.appendChild(addBtn);
-  addCard.appendChild(row);
-  if(!myCats.length){
-    addCard.appendChild(el('div','note', isFullAdmin() ? 'No equipment types yet — set some up in Admin → Equipment Types first.' : 'No equipment types are assigned to your department yet — ask an admin to assign one in Equipment Types.'));
+    holder.appendChild(addCard);
   }
-  holder.appendChild(addCard);
 
-  const quickAddCard = el('div','card');
+  const quickAddCard = el('div', cartsOnly ? 'card pin-top' : 'card');
   quickAddCard.innerHTML = '<div class="section-label">Quick-add numbered equipment</div>';
   const quickDesc = el('div','note');
   quickDesc.style.marginBottom = '12px';
