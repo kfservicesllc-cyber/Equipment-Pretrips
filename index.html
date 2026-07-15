@@ -294,9 +294,25 @@ async function setJSON(key, val){
   }
   return false;
 }
+async function deleteJSON(key){
+  if(!supa) return false;
+  try{
+    const { error } = await supa.from('kv_store').delete().eq('key', key);
+    if(!error) return true;
+    console.error('storage delete failed', key, error);
+    return false;
+  }catch(e){
+    console.error('storage delete failed', key, e);
+    return false;
+  }
+}
 function uid(prefix){
   return prefix + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2,6);
 }
+// Short codes used to auto-prefix Quick-add numbered equipment so the same number can be
+// reused at different locations (e.g. "SCH-12" at Schuss vs "CR-12" at Cedar River) without
+// colliding, since Unit ID is the app's single global identifier for a piece of equipment.
+const LOCATION_CODES = { 'Summit':'SUM', 'Schuss':'SCH', 'Schuss Mtn':'SCM', 'Cedar River':'CR', 'Legend':'LEG', 'Hawks Eye':'HE', 'Fleet':'FLT', 'Building Maintenance':'BM' };
 // Parses input like "701-715, 720, 725-728" into a flat, de-duplicated list of ID strings.
 // Ranges preserve the digit width of their first number, so "07-12" expands to 07, 08 ... 12
 // instead of dropping the leading zero.
@@ -1678,12 +1694,9 @@ function positionPinned(){
       child.style.maxHeight = Math.max(240, available) + 'px';
       // Its own height is capped/scrollable now, so it doesn't add to the running total —
       // nothing in these tabs currently follows a .scroll-list, but this keeps it safe if it does.
+    } else {
+      running += child.offsetHeight;
     }
-    // Plain (non-pinned) content — intro text, upload cards, etc. — is skipped here on
-    // purpose. It isn't sticky, so it scrolls away normally; counting its height toward
-    // "running" would push every pin-top bar and scroll-list budget after it too far down
-    // (this was the bug that pinned toolbars mid-screen on tabs with intro copy above them,
-    // e.g. Equipment Types).
   });
 }
 
@@ -2660,6 +2673,7 @@ async function parseAveryTemplateFile(file){
 /* ---------- bulk equipment upload ---------- */
 let pendingImportRows = null;
 let selectedBusIds = new Set();
+let editingBusIds = new Set();
 
 function parseCsv(text){
   const rows = [];
@@ -2860,6 +2874,7 @@ function renderBusesTab(holder){
   const quickDesc = el('div','note');
   quickDesc.style.marginBottom = '12px';
   quickDesc.textContent = 'Add a batch of units at once by number — built for things like golf carts. Enter numbers and/or ranges separated by commas (e.g. "701-715, 720, 725-728"). Each becomes its own unit ID, tagged with the location and type picked below.';
+  quickDesc.appendChild(document.createTextNode(' Each ID is automatically prefixed with a code for the location picked below (e.g. "SCH-12" at Schuss, "CR-12" at Cedar River), so the same number can be reused at multiple locations without colliding.'));
   quickTarget.appendChild(quickDesc);
 
   const qaRow = el('div');
@@ -2891,15 +2906,21 @@ function renderBusesTab(holder){
   qaBtn.className='btn btn-primary'; qaBtn.style.width='auto'; qaBtn.style.padding='12px 20px'; qaBtn.style.marginTop='12px';
   qaBtn.textContent = 'Add units';
   qaBtn.onclick = async ()=>{
-    const ids = parseNumberRanges(qaNumsInput.value);
-    if(!ids.length){ alert('Enter at least one number or range.'); return; }
+    const nums = parseNumberRanges(qaNumsInput.value);
+    if(!nums.length){ alert('Enter at least one number or range.'); return; }
     if(!myCats.length){ alert('Set up an equipment type first in Admin → Equipment Types.'); return; }
+    // Prefix each number with a short code for the chosen location so the same number can be
+    // reused across locations (e.g. "12" at Schuss and "12" at Cedar River become distinct
+    // IDs "SCH-12" / "CR-12") instead of colliding on Unit ID, which must stay globally unique.
+    const loc = qaLocSelect.value;
+    const code = LOCATION_CODES[loc] || loc.slice(0,3).toUpperCase();
+    const ids = nums.map(n => code + '-' + n);
     const existing = new Set(state.buses.map(b=>b.id));
     const dupes = ids.filter(id=>existing.has(id));
     const toAdd = ids.filter(id=>!existing.has(id));
     if(!toAdd.length){ alert('All of those IDs already exist.'); return; }
     qaBtn.disabled = true; qaBtn.textContent = 'Saving...';
-    const newBuses = toAdd.map(id=>({id, name:'', category: qaCatSelect.value, location: qaLocSelect.value}));
+    const newBuses = toAdd.map(id=>({id, name:'', category: qaCatSelect.value, location: loc}));
     const prevBuses = state.buses.slice();
     state.buses = state.buses.concat(newBuses);
     const ok = await saveBuses();
@@ -3199,25 +3220,118 @@ function renderBusesTab(holder){
     selWrap.appendChild(selCb);
     card.appendChild(selWrap);
     const info = el('div','info');
-    info.innerHTML = `<div class="bus-id" style="font-family:'Barlow Condensed'; font-size:22px; font-weight:700; color:var(--navy);">${escapeHtml(b.id)}</div>
-      <div class="bus-name" style="color:var(--ink-soft);">${escapeHtml(b.name||'')}</div>
-      <div class="bus-name" style="color:var(--ink-soft); margin-bottom:10px; font-size:11.5px; text-transform:uppercase; letter-spacing:.05em;">${escapeHtml(cat.label)} · ${escapeHtml(loc)}</div>`;
-    const rm = document.createElement('button');
-    rm.className='btn btn-outline btn-sm'; rm.textContent='Remove';
-    rm.onclick = async ()=>{
-      if(!confirm('Remove ' + b.id + '? Its shift history stays in storage but will no longer show in the picker.')) return;
-      const prevBuses = state.buses;
-      state.buses = state.buses.filter(x=>x.id!==b.id);
-      const ok = await saveBuses();
-      if(!ok){
-        state.buses = prevBuses;
-        alert('Could not save this change.' + (lastStorageError ? '\n\nDetails: ' + lastStorageError : ''));
-        return;
-      }
-      selectedBusIds.delete(b.id);
-      renderAdminTab(holder);
-    };
-    info.appendChild(rm);
+    if(editingBusIds.has(b.id)){
+      const editRow1 = el('div');
+      editRow1.style.cssText = 'display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px;';
+      const idField = el('div','field'); idField.style.cssText='min-width:110px; margin-bottom:0;';
+      idField.innerHTML = '<label>ID</label>';
+      const idInput = document.createElement('input'); idInput.type='text'; idInput.value=b.id;
+      idField.appendChild(idInput);
+      editRow1.appendChild(idField);
+      const nameField = el('div','field'); nameField.style.cssText='flex:1; min-width:140px; margin-bottom:0;';
+      nameField.innerHTML = '<label>Name</label>';
+      const editNameInput = document.createElement('input'); editNameInput.type='text'; editNameInput.value=b.name||'';
+      nameField.appendChild(editNameInput);
+      editRow1.appendChild(nameField);
+      info.appendChild(editRow1);
+
+      const editRow2 = el('div');
+      editRow2.style.cssText = 'display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;';
+      const typeField = el('div','field'); typeField.style.cssText='min-width:150px; margin-bottom:0;';
+      typeField.innerHTML = '<label>Type</label>';
+      const editTypeSelect = document.createElement('select');
+      myCats.forEach(c => { const o=document.createElement('option'); o.value=c.key; o.textContent=c.label; if(c.key===b.category) o.selected=true; editTypeSelect.appendChild(o); });
+      typeField.appendChild(editTypeSelect);
+      editRow2.appendChild(typeField);
+      const editLocField = el('div','field'); editLocField.style.cssText='min-width:150px; margin-bottom:0;';
+      editLocField.innerHTML = '<label>Location</label>';
+      const editLocSelect = document.createElement('select');
+      const editAutoOpt = document.createElement('option'); editAutoOpt.value=''; editAutoOpt.textContent='Auto (from ID)';
+      editLocSelect.appendChild(editAutoOpt);
+      LOCATIONS.forEach(l => { const o=document.createElement('option'); o.value=l; o.textContent=l; if(l===b.location) o.selected=true; editLocSelect.appendChild(o); });
+      editLocField.appendChild(editLocSelect);
+      editRow2.appendChild(editLocField);
+      info.appendChild(editRow2);
+
+      const editBtnRow = el('div');
+      editBtnRow.style.cssText = 'display:flex; gap:8px;';
+      const saveEditBtn = document.createElement('button');
+      saveEditBtn.className='btn btn-primary btn-sm'; saveEditBtn.textContent='Save';
+      saveEditBtn.onclick = async ()=>{
+        const newId = idInput.value.trim();
+        if(!newId){ alert('Enter an ID.'); return; }
+        const oldId = b.id;
+        const renamed = newId !== oldId;
+        if(renamed && state.buses.some(x=>x.id===newId)){ alert('That ID already exists.'); return; }
+        if(renamed && !confirm('Renaming "' + oldId + '" to "' + newId + '" will break any QR code label already printed for this unit, since the printed code still points to "' + oldId + '". You\'ll need to reprint its QR code after saving. Continue?')) return;
+        saveEditBtn.disabled = true; saveEditBtn.textContent = 'Saving...';
+        const idx = state.buses.findIndex(x=>x.id===oldId);
+        if(idx===-1){ saveEditBtn.disabled=false; saveEditBtn.textContent='Save'; alert('Could not find this unit anymore — try refreshing.'); return; }
+        const updatedBus = Object.assign({}, b, { id:newId, name: editNameInput.value.trim(), category: editTypeSelect.value });
+        if(editLocSelect.value) updatedBus.location = editLocSelect.value; else delete updatedBus.location;
+        const prevBuses = state.buses;
+        state.buses = state.buses.slice();
+        state.buses[idx] = updatedBus;
+        const ok = await saveBuses();
+        if(!ok){
+          state.buses = prevBuses;
+          saveEditBtn.disabled = false; saveEditBtn.textContent = 'Save';
+          alert('Could not save this change.' + (lastStorageError ? '\n\nDetails: ' + lastStorageError : ''));
+          return;
+        }
+        if(renamed){
+          // Shift history (mileage readings, PM baseline) is stored per-bus under "shifts:<id>",
+          // so it has to be moved over to the new ID's storage key rather than following
+          // automatically the way name/type/location do (those live on the bus object itself).
+          const oldShifts = await loadShifts(oldId);
+          const moveOk = await saveShifts(newId, oldShifts);
+          if(moveOk){
+            delete state.shiftsCache[oldId];
+            await deleteJSON('shifts:' + oldId); // best-effort cleanup; safe to leave behind if this fails
+          } else {
+            alert('Renamed to ' + newId + ', but its shift history could not be moved automatically. If history looks missing, try the rename again.');
+          }
+          selectedBusIds.delete(oldId);
+        }
+        editingBusIds.delete(oldId);
+        renderAdminTab(holder);
+      };
+      editBtnRow.appendChild(saveEditBtn);
+      const cancelEditBtn = document.createElement('button');
+      cancelEditBtn.className='btn btn-outline btn-sm'; cancelEditBtn.textContent='Cancel';
+      cancelEditBtn.onclick = ()=>{ editingBusIds.delete(b.id); renderAdminTab(holder); };
+      editBtnRow.appendChild(cancelEditBtn);
+      info.appendChild(editBtnRow);
+    } else {
+      const displayBlock = el('div');
+      displayBlock.innerHTML = `<div class="bus-id" style="font-family:'Barlow Condensed'; font-size:22px; font-weight:700; color:var(--navy);">${escapeHtml(b.id)}</div>
+        <div class="bus-name" style="color:var(--ink-soft);">${escapeHtml(b.name||'')}</div>
+        <div class="bus-name" style="color:var(--ink-soft); margin-bottom:10px; font-size:11.5px; text-transform:uppercase; letter-spacing:.05em;">${escapeHtml(cat.label)} · ${escapeHtml(loc)}</div>`;
+      info.appendChild(displayBlock);
+      const btnRow = el('div');
+      btnRow.style.cssText = 'display:flex; gap:8px;';
+      const editBtn = document.createElement('button');
+      editBtn.className='btn btn-outline btn-sm'; editBtn.textContent='Edit';
+      editBtn.onclick = ()=>{ editingBusIds.add(b.id); renderAdminTab(holder); };
+      btnRow.appendChild(editBtn);
+      const rm = document.createElement('button');
+      rm.className='btn btn-outline btn-sm'; rm.textContent='Remove';
+      rm.onclick = async ()=>{
+        if(!confirm('Remove ' + b.id + '? Its shift history stays in storage but will no longer show in the picker.')) return;
+        const prevBuses = state.buses;
+        state.buses = state.buses.filter(x=>x.id!==b.id);
+        const ok = await saveBuses();
+        if(!ok){
+          state.buses = prevBuses;
+          alert('Could not save this change.' + (lastStorageError ? '\n\nDetails: ' + lastStorageError : ''));
+          return;
+        }
+        selectedBusIds.delete(b.id);
+        renderAdminTab(holder);
+      };
+      btnRow.appendChild(rm);
+      info.appendChild(btnRow);
+    }
     card.appendChild(info);
 
     if(!cartsOnly){
