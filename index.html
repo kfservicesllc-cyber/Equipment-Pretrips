@@ -124,6 +124,9 @@
   .pf-btn.fail.on{background:#fbe3e0; border-color:var(--bad); color:var(--bad);}
   .check-fail-note{margin-top:8px;}
   .check-fail-note textarea{border-color:var(--bad);}
+  .check-section-label{font-family:'Barlow Condensed'; font-size:14px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:var(--navy); margin:16px 0 4px; padding-bottom:5px; border-bottom:2px solid var(--gold);}
+  .check-section-label:first-child{margin-top:0;}
+  .check-row .note-only-ta{margin-top:6px;}
 
   .issue-row{border:1.5px solid var(--line); border-radius:8px; padding:12px; margin-bottom:10px;}
   .issue-row-top{display:flex; gap:8px; align-items:center; margin-bottom:8px;}
@@ -289,6 +292,31 @@ async function setJSON(key, val){
 function uid(prefix){
   return prefix + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2,6);
 }
+// Parses input like "701-715, 720, 725-728" into a flat, de-duplicated list of ID strings.
+// Ranges preserve the digit width of their first number, so "07-12" expands to 07, 08 ... 12
+// instead of dropping the leading zero.
+function parseNumberRanges(input){
+  const out = [];
+  const seen = new Set();
+  String(input||'').split(',').forEach(tokenRaw=>{
+    const token = tokenRaw.trim();
+    if(!token) return;
+    const m = token.match(/^(\d+)\s*-\s*(\d+)$/);
+    if(m){
+      const start = parseInt(m[1],10), end = parseInt(m[2],10);
+      const width = m[1].length;
+      if(start<=end){
+        for(let n=start; n<=end; n++){
+          const id = String(n).padStart(width,'0');
+          if(!seen.has(id)){ seen.add(id); out.push(id); }
+        }
+      }
+    } else if(!seen.has(token)){
+      seen.add(token); out.push(token);
+    }
+  });
+  return out;
+}
 function fmtDT(iso){
   const d = new Date(iso);
   return d.toLocaleDateString(undefined,{month:'short',day:'numeric'}) + ' · ' + d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'});
@@ -299,6 +327,15 @@ function qrUrl(dataStr, size){
 function selfUrlFor(busId){
   const base = window.location.href.split('#')[0];
   return base + '#bus=' + encodeURIComponent(busId);
+}
+// One shared QR code per storage area (e.g. a cart barn) instead of one per unit. Scanning it
+// takes the driver to a dropdown of matching units (filtered by location, and optionally by
+// equipment type) instead of straight into a single unit's form.
+function selfUrlForArea(location, catKey){
+  const base = window.location.href.split('#')[0];
+  let hash = '#area=' + encodeURIComponent(location);
+  if(catKey) hash += '&cat=' + encodeURIComponent(catKey);
+  return base + hash;
 }
 function buildFailureEmailBody(bus, driver, mileage, timestamp, failedChecks){
   const cat = categoryFor(bus);
@@ -391,26 +428,6 @@ async function sendPmNotification(bus, driver, mileage, timestamp, dueItems){
 
 
 const ISSUE_CATEGORIES = ['Brakes','Engine','Transmission','A/C · Heat','Tires / Tracks','Lights · Electrical','Hydraulics','Cutting Unit / Reels','Winch / Cable','PTO / Attachments','Body · Exterior','Fluids / Leak','Other'];
-// Official Shanty Creek Resorts department list (code - name), used for the Department field on every shift/checklist form.
-const OFFICIAL_DEPARTMENTS = [
-  '002 - Rooms',
-  '011 - Summit (F&B)',
-  '012 - Schuss (F&B)',
-  '013 - Cedar (F&B)',
-  "014 - Arnie's (F&B)",
-  '030 - IT',
-  '040 - Transportation',
-  '055 - Summit Golf',
-  '056 - Schuss Golf',
-  '057 - Cedar River Golf',
-  '058 - Legend Golf',
-  '059 - Hawks Eye Golf',
-  '060 - Schuss Mountain (Ski)',
-  '240 - Sales and Marketing',
-  '250 - Building Maintenance',
-  '255 - Grounds',
-  '290 - Laundry'
-];
 
 function defaultCategories(){
   return [
@@ -559,6 +576,7 @@ const state = {
   qrLocked: false,
   siteUnlocked: false,
   qrLockedBusId: null,
+  qrLockedArea: null, // {location, catKey} — set when scanning a shared storage-area QR code instead of a single-unit QR code
   driver: { screen: 'pick', busId: null, action: null, typeFilter: 'all', locationFilter: 'all', sort: 'id' },
   admin: { tab: 'overview' }
 };
@@ -647,6 +665,16 @@ async function loadShardedRows(prefix){
 function deptKeyOf(obj){
   return (obj && obj.department) || '_core';
 }
+// Equipment doesn't carry its own department tag directly — a bus is scoped to whichever
+// department its equipment TYPE belongs to (see the "Equipment types this department can see"
+// checkboxes in Admin → Departments). This mirrors how the original Supabase migration derived
+// each bus's shard, and it's what lets one department (e.g. "Carts") own every unit of a type
+// across every course, while each unit's own `location` field stays completely independent for
+// QR-code scoping.
+function busDeptKeyOf(bus){
+  const cat = categoryFor(bus);
+  return (cat && cat.department) || '_core';
+}
 async function saveSharded(prefix, items, groupKeyFn){
   if(isFullAdmin()){
     // Full admin can touch every shard, so re-zero every known department (plus '_core') to
@@ -678,7 +706,7 @@ async function loadBuses(){
   state.buses = await loadShardedRows('buses');
 }
 async function saveBuses(){
-  return await saveSharded('buses', state.buses, deptKeyOf);
+  return await saveSharded('buses', state.buses, busDeptKeyOf);
 }
 async function loadCategories(){
   let cats = await loadShardedRows('categories');
@@ -870,7 +898,7 @@ function renderDriver(){
   const wrap = el('div', 'wrap narrow');
   app.appendChild(wrap);
 
-  if(state.qrLocked && state.driver.screen === 'pick'){
+  if(state.qrLocked && !state.qrLockedArea && state.driver.screen === 'pick'){
     state.driver.busId = state.qrLockedBusId;
     state.driver.screen = 'action';
   }
@@ -886,6 +914,8 @@ function renderDriver(){
 
   if(state.driver.screen === 'pick'){
     renderBusPicker(wrap);
+  } else if(state.driver.screen === 'areaPick'){
+    renderAreaPicker(wrap);
   } else if(state.driver.screen === 'action'){
     renderActionPicker(wrap);
   } else if(state.driver.screen === 'form'){
@@ -893,6 +923,54 @@ function renderDriver(){
   } else if(state.driver.screen === 'confirm'){
     renderConfirm(wrap);
   }
+}
+
+// Storage-area QR flow: scanning lands here instead of on a single unit. Shows a dropdown of
+// every unit matching the scanned location (and equipment type, if the code was generated for
+// one), then hands off into the normal action/form flow once a unit is picked.
+function renderAreaPicker(wrap){
+  const area = state.qrLockedArea || {};
+  const catLabel = area.catKey ? ((state.categories.find(c=>c.key===area.catKey)||{}).label || '') : '';
+  const matches = state.buses.filter(b=>{
+    const locOk = !area.location || locationForBus(b) === area.location;
+    const catOk = !area.catKey || (b.category||'shuttle') === area.catKey;
+    return locOk && catOk;
+  }).slice().sort((a,b)=> a.id.localeCompare(b.id, undefined, {numeric:true}));
+
+  const card = el('div','card');
+  card.innerHTML = '<div class="section-label">' + escapeHtml(area.location || 'Select equipment') + (catLabel ? ' — ' + escapeHtml(catLabel) : '') + '</div>';
+
+  if(!matches.length){
+    card.appendChild(el('div','empty','No equipment matches this location yet. Ask your manager to check the equipment setup.'));
+    wrap.appendChild(card);
+    return;
+  }
+
+  const field = el('div','field');
+  field.innerHTML = '<label>Select your unit number</label>';
+  const sel = document.createElement('select');
+  sel.id = 'area-unit-select';
+  sel.innerHTML = '<option value="">Choose one...</option>' + matches.map(b=>`<option value="${escapeHtml(b.id)}">${escapeHtml(b.id)}${b.name ? ' — '+escapeHtml(b.name) : ''}</option>`).join('');
+  field.appendChild(sel);
+  card.appendChild(field);
+
+  const goBtn = document.createElement('button');
+  goBtn.className='btn btn-primary'; goBtn.style.marginTop='6px'; goBtn.textContent='Continue';
+  goBtn.onclick = ()=>{
+    if(!sel.value){ alert('Please select a unit number.'); return; }
+    const b = state.buses.find(x=>x.id===sel.value);
+    formPreTrip = {}; formIssues = [];
+    state.driver.busId = sel.value;
+    if(b && checkModeFor(categoryFor(b)) === 'daily'){
+      state.driver.action = 'daily';
+      state.driver.screen = 'form';
+    } else {
+      state.driver.screen = 'action';
+    }
+    render();
+  };
+  card.appendChild(goBtn);
+  wrap.appendChild(card);
 }
 
 function renderBusPicker(wrap){
@@ -978,6 +1056,10 @@ function renderActionPicker(wrap){
     const back = el('button','btn-link','← Choose a different bus');
     back.onclick = () => { state.driver.screen='pick'; state.driver.busId=null; render(); };
     wrap.appendChild(back);
+  } else if(state.qrLockedArea){
+    const back = el('button','btn-link','← Choose a different unit');
+    back.onclick = () => { state.driver.screen='areaPick'; state.driver.busId=null; render(); };
+    wrap.appendChild(back);
   }
 }
 
@@ -1019,18 +1101,6 @@ function renderShiftForm(wrap){
   nameInput.type='text'; nameInput.placeholder='Full name'; nameInput.id='drv-name';
   fName.appendChild(nameInput);
   form.appendChild(fName);
-
-  // Department
-  const fDept = el('div','field');
-  fDept.innerHTML = '<label>Department</label>';
-  const deptSel = document.createElement('select');
-  deptSel.id = 'drv-dept';
-  const deptPlaceholder = document.createElement('option');
-  deptPlaceholder.value = ''; deptPlaceholder.textContent = 'Select department...';
-  deptSel.appendChild(deptPlaceholder);
-  OFFICIAL_DEPARTMENTS.forEach(d=>{ const o=document.createElement('option'); o.value=d; o.textContent=d; deptSel.appendChild(o); });
-  fDept.appendChild(deptSel);
-  form.appendChild(fDept);
 
   // Odometer / hour meter (skipped for equipment with no meter, e.g. trailers)
   if(cat.trackingUnit !== 'none'){
@@ -1089,6 +1159,10 @@ function renderShiftForm(wrap){
       const back = el('button','btn-link','← Choose a different equipment');
       back.onclick = () => { state.driver.screen='pick'; state.driver.busId=null; formIssues=[]; formPreTrip={}; render(); };
       wrap.appendChild(back);
+    } else if(state.qrLockedArea){
+      const back = el('button','btn-link','← Choose a different unit');
+      back.onclick = () => { state.driver.screen='areaPick'; state.driver.busId=null; formIssues=[]; formPreTrip={}; render(); };
+      wrap.appendChild(back);
     }
   } else {
     const back = el('button','btn-link','← Back');
@@ -1099,37 +1173,83 @@ function renderShiftForm(wrap){
 
 function renderCheckRows(container, checklist){
   container.innerHTML='';
-  checklist.forEach(item => {
-    const state_ = formPreTrip[item.key];
-    const row = el('div','check-row');
-    const top = el('div','check-row-top');
-    top.appendChild(el('div','lbl',item.label));
-    const pair = el('div','pf-pair');
-    const passBtn = el('button','pf-btn pass'+(state_.status==='pass'?' on':''),'Pass');
-    const failBtn = el('button','pf-btn fail'+(state_.status==='fail'?' on':''),'Fail');
-    passBtn.onclick = (e)=>{ e.preventDefault(); formPreTrip[item.key].status='pass'; renderCheckRows(container, checklist); };
-    failBtn.onclick = (e)=>{ e.preventDefault(); formPreTrip[item.key].status='fail'; renderCheckRows(container, checklist); };
-    pair.appendChild(passBtn); pair.appendChild(failBtn);
-    top.appendChild(pair);
-    row.appendChild(top);
-    if(state_.status === 'fail'){
-      const sevWrap = el('div','sev-pill');
-      sevWrap.style.margin = '8px 0';
-      const minorBtn = el('button','sev-btn sel-minor'+(state_.severity==='minor'?' on':''),'Minor');
-      const urgentBtn = el('button','sev-btn sel-urgent'+(state_.severity==='urgent'?' on':''),'Urgent · Out of service');
-      minorBtn.onclick = (e)=>{ e.preventDefault(); formPreTrip[item.key].severity='minor'; renderCheckRows(container, checklist); };
-      urgentBtn.onclick = (e)=>{ e.preventDefault(); formPreTrip[item.key].severity='urgent'; renderCheckRows(container, checklist); };
-      sevWrap.appendChild(minorBtn); sevWrap.appendChild(urgentBtn);
-      row.appendChild(sevWrap);
 
-      const noteWrap = el('div','check-fail-note');
-      const ta = document.createElement('textarea');
-      ta.rows=2; ta.placeholder='What\'s wrong with ' + item.label.toLowerCase() + '?'; ta.value = state_.note;
-      ta.oninput = ()=> formPreTrip[item.key].note = ta.value;
-      noteWrap.appendChild(ta);
-      row.appendChild(noteWrap);
+  // Group items by an optional 'section' name (e.g. Tires / Body / Driveability), preserving
+  // the order sections first appear in. Items with no section (the vast majority of equipment
+  // types) land in a single unnamed group with no header, so this is a no-op for anything that
+  // hasn't opted into sections.
+  const sections = [];
+  const sectionIndex = {};
+  checklist.forEach(item => {
+    const name = item.section || '';
+    if(!(name in sectionIndex)){ sectionIndex[name] = sections.length; sections.push({name, items:[]}); }
+    sections[sectionIndex[name]].items.push(item);
+  });
+
+  sections.forEach(sec => {
+    if(sec.name){
+      container.appendChild(el('div','check-section-label', sec.name));
     }
-    container.appendChild(row);
+    sec.items.forEach(item => {
+      const state_ = formPreTrip[item.key];
+      const row = el('div','check-row');
+
+      if(item.alwaysNote){
+        // Catch-all free-text item — no Pass/Fail, just a note. Filling it in auto-flags it as
+        // a (minor by default) fail so it flows through the same notification/PM-alert path as
+        // any other failed check; leaving it blank submits clean.
+        row.appendChild(el('div','lbl', item.label));
+        const ta = document.createElement('textarea');
+        ta.className = 'note-only-ta';
+        ta.rows=2; ta.placeholder='Describe anything else worth flagging...'; ta.value = state_.note || '';
+        ta.oninput = ()=>{
+          formPreTrip[item.key].note = ta.value;
+          formPreTrip[item.key].status = ta.value.trim() ? 'fail' : null;
+        };
+        row.appendChild(ta);
+        if(state_.note && state_.note.trim()){
+          const sevWrap = el('div','sev-pill');
+          sevWrap.style.margin = '8px 0 0';
+          const minorBtn = el('button','sev-btn sel-minor'+(state_.severity==='minor'?' on':''),'Minor');
+          const urgentBtn = el('button','sev-btn sel-urgent'+(state_.severity==='urgent'?' on':''),'Urgent · Out of service');
+          minorBtn.onclick = (e)=>{ e.preventDefault(); formPreTrip[item.key].severity='minor'; renderCheckRows(container, checklist); };
+          urgentBtn.onclick = (e)=>{ e.preventDefault(); formPreTrip[item.key].severity='urgent'; renderCheckRows(container, checklist); };
+          sevWrap.appendChild(minorBtn); sevWrap.appendChild(urgentBtn);
+          row.appendChild(sevWrap);
+        }
+        container.appendChild(row);
+        return;
+      }
+
+      const top = el('div','check-row-top');
+      top.appendChild(el('div','lbl',item.label));
+      const pair = el('div','pf-pair');
+      const passBtn = el('button','pf-btn pass'+(state_.status==='pass'?' on':''),'Pass');
+      const failBtn = el('button','pf-btn fail'+(state_.status==='fail'?' on':''),'Fail');
+      passBtn.onclick = (e)=>{ e.preventDefault(); formPreTrip[item.key].status='pass'; renderCheckRows(container, checklist); };
+      failBtn.onclick = (e)=>{ e.preventDefault(); formPreTrip[item.key].status='fail'; renderCheckRows(container, checklist); };
+      pair.appendChild(passBtn); pair.appendChild(failBtn);
+      top.appendChild(pair);
+      row.appendChild(top);
+      if(state_.status === 'fail'){
+        const sevWrap = el('div','sev-pill');
+        sevWrap.style.margin = '8px 0';
+        const minorBtn = el('button','sev-btn sel-minor'+(state_.severity==='minor'?' on':''),'Minor');
+        const urgentBtn = el('button','sev-btn sel-urgent'+(state_.severity==='urgent'?' on':''),'Urgent · Out of service');
+        minorBtn.onclick = (e)=>{ e.preventDefault(); formPreTrip[item.key].severity='minor'; renderCheckRows(container, checklist); };
+        urgentBtn.onclick = (e)=>{ e.preventDefault(); formPreTrip[item.key].severity='urgent'; renderCheckRows(container, checklist); };
+        sevWrap.appendChild(minorBtn); sevWrap.appendChild(urgentBtn);
+        row.appendChild(sevWrap);
+
+        const noteWrap = el('div','check-fail-note');
+        const ta = document.createElement('textarea');
+        ta.rows=2; ta.placeholder='What\'s wrong with ' + item.label.toLowerCase() + '?'; ta.value = state_.note;
+        ta.oninput = ()=> formPreTrip[item.key].note = ta.value;
+        noteWrap.appendChild(ta);
+        row.appendChild(noteWrap);
+      }
+      container.appendChild(row);
+    });
   });
 }
 
@@ -1168,14 +1288,11 @@ function renderIssueRows(container){
 async function submitShift(bus, action, btn){
   const cat = categoryFor(bus);
   const name = document.getElementById('drv-name').value.trim();
-  const deptEl = document.getElementById('drv-dept');
-  const department = deptEl ? deptEl.value : '';
   const odoEl = document.getElementById('drv-odo');
   const notesEl = document.getElementById('drv-notes');
   const notes = notesEl ? notesEl.value.trim() : '';
 
   if(!name){ alert('Please enter the driver name.'); return; }
-  if(!department){ alert('Please select a department.'); return; }
 
   let mileage = null;
   if(cat.trackingUnit !== 'none'){
@@ -1188,7 +1305,7 @@ async function submitShift(bus, action, btn){
   let failedChecks = [];
   const hasChecklist = (action === 'start' || action === 'daily');
   if(hasChecklist){
-    const unanswered = cat.checklist.filter(c => !formPreTrip[c.key] || !formPreTrip[c.key].status);
+    const unanswered = cat.checklist.filter(c => !c.alwaysNote && (!formPreTrip[c.key] || !formPreTrip[c.key].status));
     if(unanswered.length){ alert('Please mark every check as Pass or Fail before submitting.'); return; }
     failedChecks = cat.checklist.filter(c => formPreTrip[c.key].status==='fail').map(c => ({label:c.label, note:formPreTrip[c.key].note, severity:formPreTrip[c.key].severity||'minor'}));
   }
@@ -1199,7 +1316,7 @@ async function submitShift(bus, action, btn){
     id: uid('shift'),
     busId: bus.id,
     busName: bus.name || '',
-    action, driver: name, department, mileage,
+    action, driver: name, mileage,
     timestamp: new Date().toISOString(),
     notes,
     preTrip: hasChecklist ? JSON.parse(JSON.stringify(formPreTrip)) : undefined,
@@ -1370,7 +1487,11 @@ function renderConfirm(wrap){
   newBtn.onclick = ()=>{
     state.driver.failedChecks=[]; state.driver.urgentCount=0; state.driver.pmDue=[]; state.driver.pmEmailResult=null;
     formIssues=[]; formPreTrip={};
-    if(state.qrLocked){
+    if(state.qrLockedArea){
+      state.driver.busId = null;
+      state.driver.action = null;
+      state.driver.screen = 'areaPick';
+    } else if(state.qrLocked){
       const lockedBus = state.buses.find(b=>b.id===state.qrLockedBusId);
       const lockedMode = lockedBus ? checkModeFor(categoryFor(lockedBus)) : 'shift';
       state.driver.busId = state.qrLockedBusId;
@@ -1909,6 +2030,25 @@ function renderDepartmentsTab(holder){
   addCard.appendChild(addRow);
   holder.appendChild(addCard);
 
+  const resyncCard = el('div','card');
+  resyncCard.innerHTML = '<div class="section-label">Resync equipment shards</div>';
+  const resyncNote = el('div','note');
+  resyncNote.style.marginBottom = '10px';
+  resyncNote.textContent = 'Run this once after changing which department an equipment type belongs to below (e.g. assigning "Golf Cart" to a new department). It re-saves every unit into the correct department\'s storage so that department\'s login can add and edit them — nothing about what units exist or where they\'re located changes, this only fixes who can write to them.';
+  resyncCard.appendChild(resyncNote);
+  const resyncBtn = document.createElement('button');
+  resyncBtn.className='btn btn-outline'; resyncBtn.style.width='auto'; resyncBtn.style.padding='11px 18px';
+  resyncBtn.textContent = 'Resync now';
+  resyncBtn.onclick = async ()=>{
+    resyncBtn.disabled = true; resyncBtn.textContent = 'Resyncing...';
+    const ok = await saveBuses();
+    resyncBtn.disabled = false; resyncBtn.textContent = 'Resync now';
+    if(ok) alert('Done — equipment has been resaved into the correct department shards.');
+    else alert('Could not resync.' + (lastStorageError?'\n\nDetails: '+lastStorageError:''));
+  };
+  resyncCard.appendChild(resyncBtn);
+  holder.appendChild(resyncCard);
+
   state.departments.forEach((dept, idx) => {
     const card = el('div','card');
     const head = el('div','flex-between');
@@ -2256,6 +2396,40 @@ function printQrLabels(buses, labelSize){
   win.onload = () => { win.focus(); win.print(); };
 }
 
+// Prints a single poster-style QR code for a whole storage area (e.g. a cart barn), rather than
+// the per-unit label sheets printQrLabels produces. Meant to be printed once and posted at the
+// location; scanning it lands on the areaPick dropdown instead of a single unit's form.
+function printAreaQrLabel(location, catKey){
+  if(!location) return;
+  const win = window.open('', '_blank');
+  if(!win){ alert('Your browser blocked the print window — allow pop-ups for this site and try again.'); return; }
+  const catLabel = catKey ? ((state.categories.find(c=>c.key===catKey)||{}).label || '') : 'All Equipment';
+  const url = selfUrlForArea(location, catKey);
+  const html = `
+    <!DOCTYPE html><html><head><meta charset="UTF-8"><title>${escapeHtml(location)} QR Code</title>
+    <style>
+      @page{ size: 8.5in 11in; margin:0.6in; }
+      *{box-sizing:border-box;}
+      body{ font-family: system-ui, sans-serif; text-align:center; color:#12233f; margin:0; padding-top:0.6in; }
+      .kicker{ font-size:14px; letter-spacing:.18em; text-transform:uppercase; color:#5b6472; margin-top:0; }
+      .title{ font-family:'Barlow Condensed', sans-serif; font-size:52px; font-weight:800; margin:8px 0 2px; }
+      .sub{ font-size:19px; color:#5b6472; margin-bottom:30px; }
+      img{ width:3.75in; height:3.75in; }
+      .instructions{ font-size:17px; margin-top:30px; max-width:5in; margin-left:auto; margin-right:auto; line-height:1.6; }
+    </style></head>
+    <body>
+      <div class="kicker">Shanty Creek Resorts</div>
+      <div class="title">${escapeHtml(location)}</div>
+      <div class="sub">${escapeHtml(catLabel)} · Scan to log a check</div>
+      <img src="${qrUrl(url, '500x500')}" alt="QR code">
+      <div class="instructions">Scan this code, select your unit number from the list, then complete the check.</div>
+    </body></html>
+  `;
+  win.document.write(html);
+  win.document.close();
+  win.onload = () => { win.focus(); win.print(); };
+}
+
 /* ---------- Avery .docx template parser ----------
    Reads an Avery-provided Word template (.docx, not the old .doc format) and derives the
    same geometry a person would otherwise have to work out by hand: label width/height,
@@ -2551,6 +2725,70 @@ function renderBusesTab(holder){
   }
   holder.appendChild(addCard);
 
+  const quickAddCard = el('div','card');
+  quickAddCard.innerHTML = '<div class="section-label">Quick-add numbered equipment</div>';
+  const quickDesc = el('div','note');
+  quickDesc.style.marginBottom = '12px';
+  quickDesc.textContent = 'Add a batch of units at once by number — built for things like golf carts. Enter numbers and/or ranges separated by commas (e.g. "701-715, 720, 725-728"). Each becomes its own unit ID, tagged with the location and type picked below.';
+  quickAddCard.appendChild(quickDesc);
+
+  const qaRow = el('div');
+  qaRow.style.cssText = 'display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;';
+
+  const qaLocField = el('div','field'); qaLocField.style.minWidth='170px'; qaLocField.style.marginBottom='0';
+  qaLocField.innerHTML = '<label>Location</label>';
+  const qaLocSelect = document.createElement('select'); qaLocSelect.id='qa-loc';
+  LOCATIONS.forEach(l => { const o=document.createElement('option'); o.value=l; o.textContent=l; qaLocSelect.appendChild(o); });
+  qaLocField.appendChild(qaLocSelect);
+  qaRow.appendChild(qaLocField);
+
+  const qaCatField = el('div','field'); qaCatField.style.minWidth='170px'; qaCatField.style.marginBottom='0';
+  qaCatField.innerHTML = '<label>Type</label>';
+  const qaCatSelect = document.createElement('select'); qaCatSelect.id='qa-cat';
+  myCats.forEach(c => { const o=document.createElement('option'); o.value=c.key; o.textContent=c.label; qaCatSelect.appendChild(o); });
+  qaCatField.appendChild(qaCatSelect);
+  qaRow.appendChild(qaCatField);
+  quickAddCard.appendChild(qaRow);
+
+  const qaNumsField = el('div','field'); qaNumsField.style.marginTop='10px'; qaNumsField.style.marginBottom='0';
+  qaNumsField.innerHTML = '<label>Numbers / ranges</label>';
+  const qaNumsInput = document.createElement('input');
+  qaNumsInput.type='text'; qaNumsInput.id='qa-nums'; qaNumsInput.placeholder='e.g. 701-715, 720, 725-728';
+  qaNumsField.appendChild(qaNumsInput);
+  quickAddCard.appendChild(qaNumsField);
+
+  const qaBtn = document.createElement('button');
+  qaBtn.className='btn btn-primary'; qaBtn.style.width='auto'; qaBtn.style.padding='12px 20px'; qaBtn.style.marginTop='12px';
+  qaBtn.textContent = 'Add units';
+  qaBtn.onclick = async ()=>{
+    const ids = parseNumberRanges(qaNumsInput.value);
+    if(!ids.length){ alert('Enter at least one number or range.'); return; }
+    if(!myCats.length){ alert('Set up an equipment type first in Admin → Equipment Types.'); return; }
+    const existing = new Set(state.buses.map(b=>b.id));
+    const dupes = ids.filter(id=>existing.has(id));
+    const toAdd = ids.filter(id=>!existing.has(id));
+    if(!toAdd.length){ alert('All of those IDs already exist.'); return; }
+    qaBtn.disabled = true; qaBtn.textContent = 'Saving...';
+    const newBuses = toAdd.map(id=>({id, name:'', category: qaCatSelect.value, location: qaLocSelect.value}));
+    const prevBuses = state.buses.slice();
+    state.buses = state.buses.concat(newBuses);
+    const ok = await saveBuses();
+    if(!ok){
+      state.buses = prevBuses;
+      qaBtn.disabled = false; qaBtn.textContent = 'Add units';
+      alert('Could not save.' + (lastStorageError?'\n\nDetails: '+lastStorageError:''));
+      return;
+    }
+    qaBtn.disabled = false; qaBtn.textContent = 'Add units';
+    if(dupes.length) alert('Added ' + toAdd.length + ' unit(s). Skipped ' + dupes.length + ' that already existed: ' + dupes.join(', '));
+    renderAdminTab(holder);
+  };
+  quickAddCard.appendChild(qaBtn);
+  if(!myCats.length){
+    quickAddCard.appendChild(el('div','note', isFullAdmin() ? 'No equipment types yet — set some up in Admin → Equipment Types first.' : 'No equipment types are assigned to your department yet — ask an admin to assign one in Equipment Types.'));
+  }
+  holder.appendChild(quickAddCard);
+
   const uploadCard = el('div','card');
   uploadCard.innerHTML = '<div class="section-label">Or upload a CSV</div>';
   const uploadDesc = el('div','note');
@@ -2611,6 +2849,49 @@ function renderBusesTab(holder){
 
   if(pendingImportRows) renderImportPreview(previewContainer, holder);
   holder.appendChild(uploadCard);
+
+  const areaCard = el('div','card');
+  areaCard.innerHTML = '<div class="section-label">Storage Area QR Codes</div>';
+  const areaDesc = el('div','note');
+  areaDesc.style.marginBottom = '12px';
+  areaDesc.textContent = 'Post one shared QR code per storage area (e.g. a cart barn) instead of printing one per unit. Scanning it shows a dropdown to pick the specific unit number, then continues into the normal check form.';
+  areaCard.appendChild(areaDesc);
+
+  const areaRow = el('div');
+  areaRow.style.cssText = 'display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;';
+
+  const areaLocField = el('div','field'); areaLocField.style.minWidth='170px'; areaLocField.style.marginBottom='0';
+  areaLocField.innerHTML = '<label>Storage area / location</label>';
+  const areaLocSelect = document.createElement('select'); areaLocSelect.id='area-qr-loc';
+  LOCATIONS.forEach(l => { const o=document.createElement('option'); o.value=l; o.textContent=l; areaLocSelect.appendChild(o); });
+  areaLocField.appendChild(areaLocSelect);
+  areaRow.appendChild(areaLocField);
+
+  const areaCatField = el('div','field'); areaCatField.style.minWidth='170px'; areaCatField.style.marginBottom='0';
+  areaCatField.innerHTML = '<label>Equipment type</label>';
+  const areaCatSelect = document.createElement('select'); areaCatSelect.id='area-qr-cat';
+  areaCatSelect.innerHTML = '<option value="">All types at this location</option>' + myCats.map(c=>`<option value="${escapeHtml(c.key)}">${escapeHtml(c.label)}</option>`).join('');
+  areaCatField.appendChild(areaCatSelect);
+  areaRow.appendChild(areaCatField);
+
+  const areaGoBtn = document.createElement('button');
+  areaGoBtn.className='btn btn-primary'; areaGoBtn.style.width='auto'; areaGoBtn.style.padding='12px 20px'; areaGoBtn.textContent='Print storage area QR code';
+  areaGoBtn.onclick = ()=> printAreaQrLabel(areaLocSelect.value, areaCatSelect.value);
+  areaRow.appendChild(areaGoBtn);
+  areaCard.appendChild(areaRow);
+
+  const areaCountNote = el('div','note'); areaCountNote.style.margin = '10px 2px 0';
+  function updateAreaCount(){
+    const loc = areaLocSelect.value; const catKey = areaCatSelect.value;
+    const n = state.buses.filter(b=> locationForBus(b)===loc && (!catKey || (b.category||'shuttle')===catKey)).length;
+    areaCountNote.textContent = n + ' unit' + (n===1?'':'s') + ' will show in the dropdown for this QR code.';
+  }
+  areaLocSelect.onchange = updateAreaCount;
+  areaCatSelect.onchange = updateAreaCount;
+  updateAreaCount();
+  areaCard.appendChild(areaCountNote);
+
+  holder.appendChild(areaCard);
 
   if(!busesForCurrentUser().length){
     holder.appendChild(el('div','empty','No equipment yet — add your first unit above.'));
@@ -2947,6 +3228,44 @@ function renderEquipmentTypesTab(holder){
   };
   addRow.appendChild(addCatBtn);
   addCatCard.appendChild(addRow);
+
+  if(!state.categories.some(c=>c.label.trim().toLowerCase()==='golf cart')){
+    const cartBtnRow = el('div'); cartBtnRow.style.marginTop='10px';
+    const cartBtn = document.createElement('button');
+    cartBtn.className='btn btn-outline btn-sm';
+    cartBtn.textContent = '+ Add "Golf Cart" with Tires / Body / Driveability checklist';
+    cartBtn.onclick = async ()=>{
+      const newCat = {
+        key: uid('cat'), label: 'Golf Cart', trackingUnit: 'none', checkMode: 'daily',
+        checklist: [
+          {key: uid('chk'), label:'Tire tread & wear', section:'Tires'},
+          {key: uid('chk'), label:'Tire pressure', section:'Tires'},
+          {key: uid('chk'), label:'Wheels / rims — damage, loose lugs', section:'Tires'},
+          {key: uid('chk'), label:'Body panels — cracks, dents, scrapes, fading', section:'Body'},
+          {key: uid('chk'), label:'Bumpers, roof / canopy, windshield', section:'Body'},
+          {key: uid('chk'), label:'Seats & seat belts', section:'Body'},
+          {key: uid('chk'), label:'Under-seat battery — corrosion, case, wiring', section:'Body'},
+          {key: uid('chk'), label:'Steering & handling', section:'Driveability'},
+          {key: uid('chk'), label:'Brakes', section:'Driveability'},
+          {key: uid('chk'), label:'Forward / reverse switch', section:'Driveability'},
+          {key: uid('chk'), label:'Battery charge / power level', section:'Driveability'},
+          {key: uid('chk'), label:'Different issue not listed above', section:'Different Issue', alwaysNote:true}
+        ]
+      };
+      if(!isFullAdmin()) newCat.department = state.currentDepartmentKey;
+      state.categories.push(newCat);
+      const ok = await saveCategories();
+      if(!ok){
+        state.categories.pop();
+        alert('Could not save.' + (lastStorageError?'\n\nDetails: '+lastStorageError:''));
+        return;
+      }
+      renderAdminTab(holder);
+    };
+    cartBtnRow.appendChild(cartBtn);
+    addCatCard.appendChild(cartBtnRow);
+  }
+
   holder.appendChild(addCatCard);
 
   const catUploadCard = el('div','card');
@@ -3095,14 +3414,32 @@ function renderEquipmentTypesTab(holder){
     card.appendChild(head);
 
     card.appendChild(el('div','section-label','Pre-trip checklist items'));
+    const itemsHint = el('div','note');
+    itemsHint.style.cssText = 'margin:-4px 0 10px; font-size:12px;';
+    itemsHint.textContent = 'Give items the same Section name (e.g. Tires, Body, Driveability) to group them under a heading — leave Section blank to keep an item ungrouped. Check "Free text only" for a catch-all note field with no Pass/Fail buttons.';
+    card.appendChild(itemsHint);
     const itemsWrap = el('div');
     cat.checklist.forEach((item, itemIdx) => {
       const row = el('div');
-      row.style.cssText = 'display:flex; gap:8px; align-items:center; margin-bottom:8px;';
+      row.style.cssText = 'display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap;';
       const itemInput = document.createElement('input');
-      itemInput.type='text'; itemInput.value=item.label; itemInput.style.flex='1';
+      itemInput.type='text'; itemInput.value=item.label; itemInput.style.flex='1'; itemInput.style.minWidth='170px';
+      itemInput.placeholder='Check item label';
       itemInput.oninput = ()=> item.label = itemInput.value;
       row.appendChild(itemInput);
+      const sectionInput = document.createElement('input');
+      sectionInput.type='text'; sectionInput.value=item.section||''; sectionInput.style.width='140px';
+      sectionInput.placeholder='Section (optional)';
+      sectionInput.oninput = ()=> item.section = sectionInput.value;
+      row.appendChild(sectionInput);
+      const noteOnlyLabel = document.createElement('label');
+      noteOnlyLabel.style.cssText = 'display:flex; align-items:center; gap:5px; font-size:12px; color:var(--ink-soft); white-space:nowrap; cursor:pointer;';
+      const noteOnlyChk = document.createElement('input');
+      noteOnlyChk.type='checkbox'; noteOnlyChk.checked = !!item.alwaysNote;
+      noteOnlyChk.onchange = ()=> item.alwaysNote = noteOnlyChk.checked;
+      noteOnlyLabel.appendChild(noteOnlyChk);
+      noteOnlyLabel.appendChild(document.createTextNode('Free text only'));
+      row.appendChild(noteOnlyLabel);
       const rmItemBtn = document.createElement('button');
       rmItemBtn.className='btn btn-outline btn-sm'; rmItemBtn.textContent='Remove';
       rmItemBtn.onclick = ()=>{ cat.checklist.splice(itemIdx,1); renderAdminTab(holder); };
@@ -3592,7 +3929,7 @@ function renderLogTab(holder, all){
     card.appendChild(el('div','empty','No shift logs yet.'));
   } else {
     const table = document.createElement('table');
-    table.innerHTML = '<thead><tr><th>When</th><th>Equipment</th><th>Driver</th><th>Department</th><th>Action</th><th>Reading</th><th>Issues</th><th>Notes</th><th></th></tr></thead>';
+    table.innerHTML = '<thead><tr><th>When</th><th>Equipment</th><th>Driver</th><th>Action</th><th>Reading</th><th>Issues</th><th>Notes</th><th></th></tr></thead>';
     const tbody = document.createElement('tbody');
     filtered.forEach(s=>{
       const tr = document.createElement('tr');
@@ -3616,7 +3953,6 @@ function renderLogTab(holder, all){
       tr.innerHTML = `<td>${fmtDT(s.timestamp)}</td>
         <td><strong>${escapeHtml(s.busId)}</strong></td>
         <td>${escapeHtml(s.driver)}</td>
-        <td>${escapeHtml(s.department||'—')}</td>
         <td>${actionTag}</td>
         <td class="mono">${s.mileage!=null ? s.mileage.toLocaleString()+' '+sUnit : '—'}</td>
         <td>${issueCell}</td>
@@ -3645,12 +3981,12 @@ function renderLogTab(holder, all){
 }
 
 function exportCsv(all){
-  const rows = [['Timestamp','Bus','Driver','Department','Action','Odometer','Failed Checks','Issue Count','Urgent','Notes']];
+  const rows = [['Timestamp','Bus','Driver','Action','Odometer','Failed Checks','Issue Count','Urgent','Notes']];
   all.forEach(s=>{
     const cat = categoryFor(state.buses.find(b=>b.id===s.busId) || {id:s.busId});
     const failCount = s.preTrip ? Object.values(s.preTrip).filter(c=>c.status==='fail').length : 0;
     rows.push([
-      s.timestamp, s.busId, s.driver, (s.department||''), s.action, (s.mileage!=null ? s.mileage : ''),
+      s.timestamp, s.busId, s.driver, s.action, (s.mileage!=null ? s.mileage : ''),
       failCount,
       (s.issues||[]).length,
       recordHasUrgent(s, cat) ? 'YES' : 'NO',
@@ -3708,11 +4044,14 @@ async function boot(){
   await loadShiftsBatch(state.buses.map(b=>b.id));
 
   // hash deep link: #bus=ID (single QR per unit; old #bus=ID&action=start/end links still honored)
+  // or #area=LOCATION&cat=TYPEKEY (one shared QR per storage area, e.g. a cart barn — the driver
+  // picks the specific unit from a dropdown after scanning instead of scanning a per-unit code)
   const hash = window.location.hash.replace('#','');
   if(hash){
     const params = new URLSearchParams(hash);
     const busId = params.get('bus');
     const legacyAction = params.get('action');
+    const areaLoc = params.get('area');
     const bus = state.buses.find(b=>b.id===busId);
     if(busId && bus){
       const mode = checkModeFor(categoryFor(bus));
@@ -3739,6 +4078,16 @@ async function boot(){
       if(toggle) toggle.style.display = 'none';
       const subtitle = document.querySelector('.brand-text .t2');
       if(subtitle) subtitle.textContent = bus.id + (bus.name ? ' · ' + bus.name : '') + ' · ' + categoryFor(bus).label;
+    } else if(areaLoc){
+      state.mode='driver';
+      state.qrLocked = true;
+      state.qrLockedArea = { location: areaLoc, catKey: params.get('cat') || null };
+      state.driver.screen = 'areaPick';
+
+      const toggle = document.getElementById('modeToggle');
+      if(toggle) toggle.style.display = 'none';
+      const subtitle = document.querySelector('.brand-text .t2');
+      if(subtitle) subtitle.textContent = areaLoc + ' · Select your unit';
     }
   }
   render();
