@@ -2720,8 +2720,13 @@ function renderBusesTab(holder){
   const myCats = categoriesForCurrentUser();
   // Departments scoped only to cart-type equipment (e.g. a "Carts" department) don't need
   // the one-at-a-time Add equipment form — carts are always added as a numbered batch, so
-  // just the Quick-add numbered equipment card below covers it.
-  const cartsOnly = !isFullAdmin() && myCats.length>0 && myCats.every(c => /cart/i.test(c.label));
+  // just the Quick-add numbered equipment card below covers it. Checked two ways so a
+  // department is caught whether it's named for carts or just assigned cart-labeled types.
+  const currentDeptForBuses = !isFullAdmin() ? state.departments.find(d=>d.key===state.currentDepartmentKey) : null;
+  const cartsOnly = !isFullAdmin() && (
+    (currentDeptForBuses && /cart/i.test(currentDeptForBuses.name||'')) ||
+    (myCats.length>0 && myCats.every(c => /cart/i.test(c.label)))
+  );
 
   if(!cartsOnly){
     const addCard = el('div','card pin-top');
@@ -2987,20 +2992,22 @@ function renderBusesTab(holder){
   toolbar.appendChild(sortSel);
 
   const labelSizeVal = state.admin.busLabelSize || 'avery5163';
-  const labelSizeSel = document.createElement('select');
-  const labelTemplatesNow = allLabelTemplates();
-  labelSizeSel.innerHTML = Object.keys(labelTemplatesNow).map(key=>`<option value="${key}">${escapeHtml(labelTemplatesNow[key].name)}</option>`).join('');
-  labelSizeSel.value = labelSizeVal;
-  labelSizeSel.title = 'Label paper size used by the Print buttons below';
-  labelSizeSel.onchange = ()=>{ state.admin.busLabelSize = labelSizeSel.value; renderAdminTab(holder); };
-  toolbar.appendChild(document.createTextNode('Size: '));
-  toolbar.appendChild(labelSizeSel);
+  if(!cartsOnly){
+    const labelSizeSel = document.createElement('select');
+    const labelTemplatesNow = allLabelTemplates();
+    labelSizeSel.innerHTML = Object.keys(labelTemplatesNow).map(key=>`<option value="${key}">${escapeHtml(labelTemplatesNow[key].name)}</option>`).join('');
+    labelSizeSel.value = labelSizeVal;
+    labelSizeSel.title = 'Label paper size used by the Print buttons below';
+    labelSizeSel.onchange = ()=>{ state.admin.busLabelSize = labelSizeSel.value; renderAdminTab(holder); };
+    toolbar.appendChild(document.createTextNode('Size: '));
+    toolbar.appendChild(labelSizeSel);
 
-  const printAllBtn = document.createElement('button');
-  printAllBtn.className='btn btn-outline btn-sm';
-  printAllBtn.textContent = 'Print all ' + visibleBuses.length + ' QR code' + (visibleBuses.length===1?'':'s');
-  printAllBtn.onclick = ()=> printQrLabels(visibleBuses, labelSizeVal);
-  toolbar.appendChild(printAllBtn);
+    const printAllBtn = document.createElement('button');
+    printAllBtn.className='btn btn-outline btn-sm';
+    printAllBtn.textContent = 'Print all ' + visibleBuses.length + ' QR code' + (visibleBuses.length===1?'':'s');
+    printAllBtn.onclick = ()=> printQrLabels(visibleBuses, labelSizeVal);
+    toolbar.appendChild(printAllBtn);
+  }
   holder.appendChild(toolbar);
 
   // Bulk selection toolbar
@@ -3025,14 +3032,16 @@ function renderBusesTab(holder){
   bulkBar.appendChild(selectAllLabel);
 
   if(selectedVisibleCount > 0){
-    const printSelBtn = document.createElement('button');
-    printSelBtn.className='btn btn-outline btn-sm';
-    printSelBtn.textContent = 'Print ' + selectedVisibleCount + ' selected';
-    printSelBtn.onclick = ()=>{
-      const chosen = visibleBuses.filter(b=>selectedBusIds.has(b.id));
-      printQrLabels(chosen, labelSizeVal);
-    };
-    bulkBar.appendChild(printSelBtn);
+    if(!cartsOnly){
+      const printSelBtn = document.createElement('button');
+      printSelBtn.className='btn btn-outline btn-sm';
+      printSelBtn.textContent = 'Print ' + selectedVisibleCount + ' selected';
+      printSelBtn.onclick = ()=>{
+        const chosen = visibleBuses.filter(b=>selectedBusIds.has(b.id));
+        printQrLabels(chosen, labelSizeVal);
+      };
+      bulkBar.appendChild(printSelBtn);
+    }
 
     const delSelBtn = document.createElement('button');
     delSelBtn.className='btn btn-outline btn-sm';
@@ -3062,10 +3071,12 @@ function renderBusesTab(holder){
   }
   holder.appendChild(bulkBar);
 
-  const note = el('div','note');
-  note.style.margin = '10px 2px 14px';
-  note.textContent = 'Print each QR code and post it on the equipment. Scanning it opens this app straight into that unit\'s form. Check the box on any unit(s) below to print just those — otherwise "Print all" prints everything shown. Pick a label size above first so the sheet lines up with your label paper. Note: for QR codes to work from drivers\' phones, this page needs a permanent link — publish this artifact (Share) or host the file, then reload this tab so the QR codes point to that address.';
-  holder.appendChild(note);
+  if(!cartsOnly){
+    const note = el('div','note');
+    note.style.margin = '10px 2px 14px';
+    note.textContent = 'Print each QR code and post it on the equipment. Scanning it opens this app straight into that unit\'s form. Check the box on any unit(s) below to print just those — otherwise "Print all" prints everything shown. Pick a label size above first so the sheet lines up with your label paper. Note: for QR codes to work from drivers\' phones, this page needs a permanent link — publish this artifact (Share) or host the file, then reload this tab so the QR codes point to that address.';
+    holder.appendChild(note);
+  }
 
   visibleBuses.forEach(b=>{
     const cat = categoryFor(b);
@@ -3105,23 +3116,25 @@ function renderBusesTab(holder){
     info.appendChild(rm);
     card.appendChild(info);
 
-    const qrs = el('div','qrs');
-    const qrLabel = checkModeFor(cat)==='shift' ? 'Scan for Start / End of Shift' : 'Scan to log a check';
-    const box = el('div','qr-box');
-    const img = document.createElement('img');
-    img.src = qrUrl(selfUrlFor(b.id));
-    img.width=140; img.height=140; img.alt=qrLabel+' QR';
-    box.appendChild(img);
-    box.appendChild(document.createTextNode(qrLabel));
-    const printBtn = document.createElement('button');
-    printBtn.className='btn btn-outline btn-sm';
-    printBtn.textContent='Print';
-    printBtn.style.display='block';
-    printBtn.style.margin='8px auto 0';
-    printBtn.onclick = ()=> printQrLabels([b], labelSizeVal);
-    box.appendChild(printBtn);
-    qrs.appendChild(box);
-    card.appendChild(qrs);
+    if(!cartsOnly){
+      const qrs = el('div','qrs');
+      const qrLabel = checkModeFor(cat)==='shift' ? 'Scan for Start / End of Shift' : 'Scan to log a check';
+      const box = el('div','qr-box');
+      const img = document.createElement('img');
+      img.src = qrUrl(selfUrlFor(b.id));
+      img.width=140; img.height=140; img.alt=qrLabel+' QR';
+      box.appendChild(img);
+      box.appendChild(document.createTextNode(qrLabel));
+      const printBtn = document.createElement('button');
+      printBtn.className='btn btn-outline btn-sm';
+      printBtn.textContent='Print';
+      printBtn.style.display='block';
+      printBtn.style.margin='8px auto 0';
+      printBtn.onclick = ()=> printQrLabels([b], labelSizeVal);
+      box.appendChild(printBtn);
+      qrs.appendChild(box);
+      card.appendChild(qrs);
+    }
     holder.appendChild(card);
   });
 }
