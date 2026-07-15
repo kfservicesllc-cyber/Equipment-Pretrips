@@ -186,6 +186,11 @@
   .pin-top{position:sticky; z-index:12;}
   .card.pin-top{background:var(--paper);}
   .toolbar.pin-top{background:var(--cream); padding:10px 2px 14px; margin-bottom:0;}
+  /* A list sitting below the pinned add/sort bars in a tab. sizeScrollLists() (JS) gives it
+     its own height (filling whatever viewport space is left under the pinned stack) and its
+     own scrollbar, so paging through a long list doesn't require scrolling past the pinned
+     bars first, and more than one item can be seen at a time even when the pinned stack is tall. */
+  .scroll-list{overflow-y:auto; -webkit-overflow-scrolling:touch; padding-right:2px; margin:0 -2px;}
   .empty{color:var(--ink-soft); font-size:13.5px; text-align:center; padding:30px 10px;}
   .tabs2{display:flex; gap:4px; border-bottom:2px solid var(--line); margin-bottom:16px; overflow-x:auto; -webkit-overflow-scrolling:touch; scrollbar-width:thin; position:sticky; z-index:15; background:var(--cream); padding-top:8px;}
   .tabs2 button{white-space:nowrap; flex:none;}
@@ -397,6 +402,30 @@ async function sendFailureNotification(bus, driver, mileage, timestamp, failedCh
   const cat = categoryFor(bus);
   const subject = 'Pre-trip check failure — ' + bus.id + ' (' + cat.label + ' · ' + locationForBus(bus) + ') — ' + driver;
   const body = buildFailureEmailBody(bus, driver, mileage, timestamp, failedChecks);
+  return await sendAppEmail(subject, body, recipientsForFailure(cat));
+}
+function buildResolvedEmailBody(bus, driver, timestamp, resolvedItems){
+  const cat = categoryFor(bus);
+  let body = 'Issue resolved\n\n';
+  body += 'Equipment: ' + bus.id + (bus.name ? ' (' + bus.name + ')' : '') + ' — ' + cat.label + '\n';
+  body += 'Location: ' + locationForBus(bus) + '\n';
+  body += 'Originally reported by: ' + driver + '\n';
+  body += 'Originally reported: ' + fmtDT(timestamp) + '\n';
+  body += 'Resolved by: ' + (currentDepartmentName() || 'Admin') + '\n';
+  body += 'Resolved: ' + fmtDT(new Date().toISOString()) + '\n\n';
+  body += 'Resolved item(s):\n';
+  resolvedItems.forEach(c => {
+    body += '- ' + c.label + (c.note ? ': ' + c.note : '') + '\n';
+  });
+  return body;
+}
+// Sent when a previously open issue is marked resolved. Goes to the same recipients a failure
+// email would have gone to — the equipment type's own notify address if set, else the global
+// default in Admin -> Settings.
+async function sendResolvedNotification(bus, driver, timestamp, resolvedItems){
+  const cat = categoryFor(bus);
+  const subject = 'Issue resolved — ' + bus.id + ' (' + cat.label + ' · ' + locationForBus(bus) + ') — ' + driver;
+  const body = buildResolvedEmailBody(bus, driver, timestamp, resolvedItems);
   return await sendAppEmail(subject, body, recipientsForFailure(cat));
 }
 function pmDueItemsFor(bus, mileage){
@@ -1628,15 +1657,30 @@ async function renderAdminTab(holder){
 // .pin-top class so it stays visible while the list under it scrolls. This computes the
 // sticky "top" offset for every .pin-top element in the current tab, stacking them in DOM
 // order just below the topbar + tab strip (both of which are sticky themselves).
+//
+// If the tab also has a .scroll-list container (the actual card list, sitting after the
+// pinned bars), this same pass gives it a max-height equal to whatever viewport space is
+// left after the topbar, tab strip, pinned bars, and any plain (non-pinned) content above
+// it — so that list gets its own internal scrollbar and scrolls independently of the page,
+// rather than being squeezed down to a sliver by a tall pinned stack.
 function positionPinned(){
   const holder = document.getElementById('admin-holder');
   if(!holder) return;
   const topbarEl = document.querySelector('.topbar');
   const tabsEl = document.querySelector('.tabs2');
   let running = (topbarEl ? topbarEl.offsetHeight : 0) + (tabsEl ? tabsEl.offsetHeight : 0);
-  holder.querySelectorAll('.pin-top').forEach(pinnedEl => {
-    pinnedEl.style.top = running + 'px';
-    running += pinnedEl.offsetHeight;
+  Array.from(holder.children).forEach(child => {
+    if(child.classList.contains('pin-top')){
+      child.style.top = running + 'px';
+      running += child.offsetHeight;
+    } else if(child.classList.contains('scroll-list')){
+      const available = window.innerHeight - running - 16;
+      child.style.maxHeight = Math.max(240, available) + 'px';
+      // Its own height is capped/scrollable now, so it doesn't add to the running total —
+      // nothing in these tabs currently follows a .scroll-list, but this keeps it safe if it does.
+    } else {
+      running += child.offsetHeight;
+    }
   });
 }
 
@@ -2846,68 +2890,72 @@ function renderBusesTab(holder){
   }
   holder.appendChild(quickAddCard);
 
-  const uploadCard = el('div','card');
-  uploadCard.innerHTML = '<div class="section-label">Or upload a CSV</div>';
-  const uploadDesc = el('div','note');
-  uploadDesc.style.marginBottom = '12px';
-  uploadDesc.textContent = 'Three columns: ID, Name, Type. Type must match one of your equipment type names exactly (not case-sensitive) — download the template to get the current list right.';
-  uploadCard.appendChild(uploadDesc);
+  // CSV upload is per-row (ID, Name, Type) and duplicates what Quick-add already covers for
+  // cart-only departments, so it's hidden there.
+  if(!cartsOnly){
+    const uploadCard = el('div','card');
+    uploadCard.innerHTML = '<div class="section-label">Or upload a CSV</div>';
+    const uploadDesc = el('div','note');
+    uploadDesc.style.marginBottom = '12px';
+    uploadDesc.textContent = 'Three columns: ID, Name, Type. Type must match one of your equipment type names exactly (not case-sensitive) — download the template to get the current list right.';
+    uploadCard.appendChild(uploadDesc);
 
-  const uploadRow = el('div');
-  uploadRow.style.cssText = 'display:flex; gap:10px; flex-wrap:wrap; align-items:center;';
-  const templateBtn = document.createElement('button');
-  templateBtn.className='btn btn-outline btn-sm'; templateBtn.textContent='Download CSV template';
-  templateBtn.onclick = downloadCsvTemplate;
-  uploadRow.appendChild(templateBtn);
+    const uploadRow = el('div');
+    uploadRow.style.cssText = 'display:flex; gap:10px; flex-wrap:wrap; align-items:center;';
+    const templateBtn = document.createElement('button');
+    templateBtn.className='btn btn-outline btn-sm'; templateBtn.textContent='Download CSV template';
+    templateBtn.onclick = downloadCsvTemplate;
+    uploadRow.appendChild(templateBtn);
 
-  const fileInput = document.createElement('input');
-  fileInput.type = 'file'; fileInput.accept = '.csv,text/csv';
-  fileInput.id = 'csv-upload-input';
-  uploadRow.appendChild(fileInput);
-  uploadCard.appendChild(uploadRow);
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file'; fileInput.accept = '.csv,text/csv';
+    fileInput.id = 'csv-upload-input';
+    uploadRow.appendChild(fileInput);
+    uploadCard.appendChild(uploadRow);
 
-  const previewContainer = el('div');
-  previewContainer.style.marginTop = '14px';
-  uploadCard.appendChild(previewContainer);
+    const previewContainer = el('div');
+    previewContainer.style.marginTop = '14px';
+    uploadCard.appendChild(previewContainer);
 
-  fileInput.onchange = (e)=>{
-    const file = e.target.files[0];
-    if(!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev)=>{
-      const rows = parseCsv(String(ev.target.result));
-      if(!rows.length){ alert('That file looks empty.'); return; }
-      let dataRows = rows;
-      const first = rows[0].map(x=>String(x).trim().toLowerCase());
-      if(first[0]==='id') dataRows = rows.slice(1);
+    fileInput.onchange = (e)=>{
+      const file = e.target.files[0];
+      if(!file) return;
+      const reader = new FileReader();
+      reader.onload = (ev)=>{
+        const rows = parseCsv(String(ev.target.result));
+        if(!rows.length){ alert('That file looks empty.'); return; }
+        let dataRows = rows;
+        const first = rows[0].map(x=>String(x).trim().toLowerCase());
+        if(first[0]==='id') dataRows = rows.slice(1);
 
-      const seenIds = new Set(state.buses.map(b=>b.id));
-      const seenInFile = new Set();
-      pendingImportRows = dataRows.filter(r=>r.some(c=>String(c).trim()!=='')).map(r=>{
-        const id = String(r[0]||'').trim();
-        const name = String(r[1]||'').trim();
-        const typeRaw = String(r[2]||'').trim();
-        const locRaw = String(r[3]||'').trim();
-        const cat = resolveCategoryByLabelOrKey(typeRaw);
-        const location = locRaw && LOCATIONS.includes(locRaw) ? locRaw : null;
-        let status='ok', reason='';
-        if(!id){ status='error'; reason='Missing ID'; }
-        else if(seenIds.has(id)){ status='error'; reason='ID already exists'; }
-        else if(seenInFile.has(id)){ status='error'; reason='Duplicate in file'; }
-        else if(!cat){ status='error'; reason='Unknown type "'+typeRaw+'"'; }
-        else if(locRaw && !location){ status='error'; reason='Unknown location "'+locRaw+'"'; }
-        if(id) seenInFile.add(id);
-        return {id, name, typeRaw, category:cat, location, status, reason};
-      });
-      renderImportPreview(previewContainer, holder);
+        const seenIds = new Set(state.buses.map(b=>b.id));
+        const seenInFile = new Set();
+        pendingImportRows = dataRows.filter(r=>r.some(c=>String(c).trim()!=='')).map(r=>{
+          const id = String(r[0]||'').trim();
+          const name = String(r[1]||'').trim();
+          const typeRaw = String(r[2]||'').trim();
+          const locRaw = String(r[3]||'').trim();
+          const cat = resolveCategoryByLabelOrKey(typeRaw);
+          const location = locRaw && LOCATIONS.includes(locRaw) ? locRaw : null;
+          let status='ok', reason='';
+          if(!id){ status='error'; reason='Missing ID'; }
+          else if(seenIds.has(id)){ status='error'; reason='ID already exists'; }
+          else if(seenInFile.has(id)){ status='error'; reason='Duplicate in file'; }
+          else if(!cat){ status='error'; reason='Unknown type "'+typeRaw+'"'; }
+          else if(locRaw && !location){ status='error'; reason='Unknown location "'+locRaw+'"'; }
+          if(id) seenInFile.add(id);
+          return {id, name, typeRaw, category:cat, location, status, reason};
+        });
+        renderImportPreview(previewContainer, holder);
+      };
+      reader.readAsText(file);
     };
-    reader.readAsText(file);
-  };
 
-  if(pendingImportRows) renderImportPreview(previewContainer, holder);
-  holder.appendChild(uploadCard);
+    if(pendingImportRows) renderImportPreview(previewContainer, holder);
+    holder.appendChild(uploadCard);
+  }
 
-  const areaCard = el('div','card');
+  const areaCard = el('div', cartsOnly ? 'card pin-top' : 'card');
   areaCard.innerHTML = '<div class="section-label">Storage Area QR Codes</div>';
   const areaDesc = el('div','note');
   areaDesc.style.marginBottom = '12px';
@@ -3078,6 +3126,9 @@ function renderBusesTab(holder){
     holder.appendChild(note);
   }
 
+  const listScroll = el('div','scroll-list');
+  holder.appendChild(listScroll);
+
   visibleBuses.forEach(b=>{
     const cat = categoryFor(b);
     const loc = locationForBus(b);
@@ -3135,7 +3186,7 @@ function renderBusesTab(holder){
       qrs.appendChild(box);
       card.appendChild(qrs);
     }
-    holder.appendChild(card);
+    listScroll.appendChild(card);
   });
 }
 
@@ -3945,10 +3996,27 @@ function renderIssuesTab(holder, all){
       btn.className='btn btn-outline btn-sm';
       btn.textContent = r.shift.issuesResolved ? 'Reopen' : 'Mark resolved';
       btn.onclick = async ()=>{
+        const wasResolved = r.shift.issuesResolved;
+        btn.disabled = true; btn.textContent = wasResolved ? 'Reopening...' : 'Marking resolved...';
         const arr = await loadShifts(r.shift.busId);
         const target = arr.find(x=>x.id===r.shift.id);
-        if(target) target.issuesResolved = !target.issuesResolved;
-        await saveShifts(r.shift.busId, arr);
+        if(target) target.issuesResolved = !wasResolved;
+        const ok = await saveShifts(r.shift.busId, arr);
+        if(!ok){
+          btn.disabled = false; btn.textContent = wasResolved ? 'Reopen' : 'Mark resolved';
+          alert('Could not save.' + (lastStorageError ? '\n\nDetails: ' + lastStorageError : ''));
+          return;
+        }
+        // Only email on open -> resolved, never on reopen.
+        if(!wasResolved && target){
+          const bus = state.buses.find(b=>b.id===target.busId) || {id: target.busId, name: target.busName};
+          const cat = categoryFor(bus);
+          const items = allFlaggedItems(target, cat).map(i => ({
+            label: i.label + (i.severity==='urgent' ? ' ⚠ URGENT' : ''),
+            note: i.note
+          }));
+          if(items.length) await sendResolvedNotification(bus, target.driver, target.timestamp, items);
+        }
         renderAdminTab(holder);
       };
       tdBtn.appendChild(btn);
