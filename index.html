@@ -341,6 +341,7 @@ function buildFailureEmailBody(bus, driver, mileage, timestamp, failedChecks){
   const cat = categoryFor(bus);
   let body = 'Pre-trip check failure\n\n';
   body += 'Equipment: ' + bus.id + (bus.name ? ' (' + bus.name + ')' : '') + ' — ' + cat.label + '\n';
+  body += 'Location: ' + locationForBus(bus) + '\n';
   body += 'Driver: ' + driver + '\n';
   if(cat.trackingUnit !== 'none' && mileage != null){
     body += (cat.trackingUnit==='hours' ? 'Hour meter: ' : 'Odometer: ') + mileage + ' ' + unitLabel(cat.trackingUnit) + '\n';
@@ -394,7 +395,7 @@ function recipientsForPm(cat){
 }
 async function sendFailureNotification(bus, driver, mileage, timestamp, failedChecks){
   const cat = categoryFor(bus);
-  const subject = 'Pre-trip check failure — ' + bus.id + ' (' + cat.label + ') — ' + driver;
+  const subject = 'Pre-trip check failure — ' + bus.id + ' (' + cat.label + ' · ' + locationForBus(bus) + ') — ' + driver;
   const body = buildFailureEmailBody(bus, driver, mileage, timestamp, failedChecks);
   return await sendAppEmail(subject, body, recipientsForFailure(cat));
 }
@@ -407,6 +408,7 @@ function buildPmEmailBody(bus, driver, mileage, timestamp, dueItems){
   const unit = unitLabel(cat.trackingUnit);
   let body = 'Preventive maintenance due\n\n';
   body += 'Equipment: ' + bus.id + (bus.name ? ' (' + bus.name + ')' : '') + ' — ' + cat.label + '\n';
+  body += 'Location: ' + locationForBus(bus) + '\n';
   body += 'Driver: ' + driver + '\n';
   body += (cat.trackingUnit==='hours' ? 'Hour meter: ' : 'Odometer: ') + mileage + ' ' + unit + '\n';
   body += 'Time: ' + fmtDT(timestamp) + '\n\n';
@@ -420,7 +422,7 @@ function buildPmEmailBody(bus, driver, mileage, timestamp, dueItems){
 }
 async function sendPmNotification(bus, driver, mileage, timestamp, dueItems){
   const cat = categoryFor(bus);
-  const subject = 'Maintenance due — ' + bus.id + ' (' + cat.label + ') — ' + dueItems.map(p=>p.label).join(', ');
+  const subject = 'Maintenance due — ' + bus.id + ' (' + cat.label + ' · ' + locationForBus(bus) + ') — ' + dueItems.map(p=>p.label).join(', ');
   const body = buildPmEmailBody(bus, driver, mileage, timestamp, dueItems);
   return await sendAppEmail(subject, body, recipientsForPm(cat));
 }
@@ -428,6 +430,16 @@ async function sendPmNotification(bus, driver, mileage, timestamp, dueItems){
 
 
 const ISSUE_CATEGORIES = ['Brakes','Engine','Transmission','A/C · Heat','Tires / Tracks','Lights · Electrical','Hydraulics','Cutting Unit / Reels','Winch / Cable','PTO / Attachments','Body · Exterior','Fluids / Leak','Other'];
+// Admin tabs a department can be scoped down to. Overview and My Account always show for every
+// signed-in session; these five can be individually hidden per department (e.g. a Carts
+// department that only needs Mechanical Issues, not Preventive Maintenance or Shift Log).
+const TOGGLEABLE_ADMIN_TABS = [
+  ['buses','Equipment & QR Codes'],
+  ['types','Equipment Types'],
+  ['pm','Preventive Maintenance'],
+  ['issues','Mechanical Issues'],
+  ['log','Shift Log']
+];
 
 function defaultCategories(){
   return [
@@ -1419,7 +1431,7 @@ function renderConfirm(wrap){
     const result = state.driver.emailResult;
     if(result && result.ok){
       statusLine.style.color = 'var(--ok)';
-      statusLine.textContent = '✓ Notification emailed automatically to ' + escapeHtml(state.settings.notifyEmail) + '.';
+      statusLine.textContent = '✓ Notification emailed automatically to ' + escapeHtml(recipientsForFailure(recCat).join(', ')) + '.';
       resendBtn.textContent = 'Resend notification';
     } else if(result && result.method==='unconfigured'){
       statusLine.style.color = 'var(--bad)';
@@ -1459,7 +1471,7 @@ function renderConfirm(wrap){
     pmResendBtn.className='btn btn-outline';
     if(pmResult && pmResult.ok){
       pmStatusLine.style.color = 'var(--ok)';
-      pmStatusLine.textContent = '✓ Maintenance notification emailed to ' + escapeHtml(state.settings.notifyEmail) + '.';
+      pmStatusLine.textContent = '✓ Maintenance notification emailed to ' + escapeHtml(recipientsForPm(recCat).join(', ')) + '.';
       pmResendBtn.textContent = 'Resend notification';
     } else if(pmResult && pmResult.method==='unconfigured'){
       pmStatusLine.style.color = 'var(--bad)';
@@ -1545,7 +1557,9 @@ function renderAdmin(){
     wrap.appendChild(deptBanner);
   }
 
-  const allTabs = [['overview','Overview'],['buses','Equipment & QR Codes'],['types','Equipment Types'],['pm','Preventive Maintenance'],['issues','Mechanical Issues'],['log','Shift Log']];
+  const currentDept = !isFullAdmin() ? state.departments.find(d=>d.key===state.currentDepartmentKey) : null;
+  const hiddenTabs = (currentDept && currentDept.hiddenTabs) || [];
+  const allTabs = [['overview','Overview'], ...TOGGLEABLE_ADMIN_TABS.filter(([key])=>!hiddenTabs.includes(key))];
   if(isFullAdmin()){
     allTabs.push(['departments','Departments']);
     allTabs.push(['settings','Settings']);
@@ -1588,6 +1602,11 @@ async function renderAdminTab(holder){
   holder.innerHTML='';
   if(!isFullAdmin() && (state.admin.tab==='settings' || state.admin.tab==='departments')){
     state.admin.tab = 'overview'; // department sessions can't reach these, even if state was fiddled with
+  }
+  if(!isFullAdmin()){
+    const dept = state.departments.find(d=>d.key===state.currentDepartmentKey);
+    const hiddenTabs = (dept && dept.hiddenTabs) || [];
+    if(hiddenTabs.includes(state.admin.tab)) state.admin.tab = 'overview';
   }
   if(state.admin.tab==='overview') renderOverview(holder, all);
   else if(state.admin.tab==='buses') renderBusesTab(holder);
@@ -2133,6 +2152,31 @@ function renderDepartmentsTab(holder){
       typesWrap.appendChild(chip);
     });
     card.appendChild(typesWrap);
+
+    card.appendChild(el('div','section-label','Tabs visible to this department'));
+    const tabsNote = el('div','note');
+    tabsNote.style.cssText = 'margin:-4px 0 8px; font-size:12px;';
+    tabsNote.textContent = 'Overview and My Account always show. Uncheck anything this department doesn\'t need — e.g. a department that only does condition checks might not need Preventive Maintenance or Shift Log, just Mechanical Issues.';
+    card.appendChild(tabsNote);
+    const tabsWrap = el('div');
+    tabsWrap.style.cssText = 'display:flex; flex-wrap:wrap; gap:8px; margin-bottom:10px;';
+    if(!dept.hiddenTabs) dept.hiddenTabs = [];
+    TOGGLEABLE_ADMIN_TABS.forEach(([key,label])=>{
+      const hidden = dept.hiddenTabs.includes(key);
+      const chip = document.createElement('label');
+      chip.style.cssText = 'display:flex; align-items:center; gap:6px; border:1.5px solid ' + (!hidden?'var(--navy)':'var(--line)') + '; border-radius:999px; padding:6px 12px; font-size:12.5px; cursor:pointer;';
+      const cb = document.createElement('input');
+      cb.type='checkbox'; cb.checked = !hidden;
+      cb.style.cssText = 'width:15px; height:15px; accent-color:var(--navy);';
+      cb.onchange = ()=>{
+        dept.hiddenTabs = cb.checked ? dept.hiddenTabs.filter(k=>k!==key) : dept.hiddenTabs.concat([key]);
+        renderAdminTab(holder);
+      };
+      chip.appendChild(cb);
+      chip.appendChild(document.createTextNode(label));
+      tabsWrap.appendChild(chip);
+    });
+    card.appendChild(tabsWrap);
 
     const saveBtn = document.createElement('button');
     saveBtn.className='btn btn-primary'; saveBtn.style.width='auto'; saveBtn.style.padding='11px 18px';
