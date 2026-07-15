@@ -1678,9 +1678,12 @@ function positionPinned(){
       child.style.maxHeight = Math.max(240, available) + 'px';
       // Its own height is capped/scrollable now, so it doesn't add to the running total —
       // nothing in these tabs currently follows a .scroll-list, but this keeps it safe if it does.
-    } else {
-      running += child.offsetHeight;
     }
+    // Plain (non-pinned) content — intro text, upload cards, etc. — is skipped here on
+    // purpose. It isn't sticky, so it scrolls away normally; counting its height toward
+    // "running" would push every pin-top bar and scroll-list budget after it too far down
+    // (this was the bug that pinned toolbars mid-screen on tabs with intro copy above them,
+    // e.g. Equipment Types).
   });
 }
 
