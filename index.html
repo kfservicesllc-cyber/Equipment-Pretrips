@@ -746,7 +746,8 @@ function allLabelTemplates(){
   return Object.assign({}, LABEL_TEMPLATES, state.customLabelTemplates || {});
 }
 async function loadSettings(){
-  state.settings = await getJSON('settings', { notifyEmail: '', pmNotifyEmail: '' });
+  state.settings = await getJSON('settings', { notifyEmail: '', pmNotifyEmail: '', dismissedBuiltins: [] });
+  if(!state.settings.dismissedBuiltins) state.settings.dismissedBuiltins = [];
 }
 async function saveSettings(){
   return await setJSON('settings', state.settings);
@@ -3406,6 +3407,13 @@ function renderEquipmentTypesTab(holder){
         state.categories = state.categories.filter(c=>c.key!==cat.key);
         const ok = await saveCategories();
         if(!ok){ alert('Could not save.' + (lastStorageError?'\n\nDetails: '+lastStorageError:'')); return; }
+        // If this was one of the built-in default types, remember that it was deliberately
+        // removed so the "New built-in types available" nudge below doesn't keep offering to
+        // add it back every time this tab loads.
+        if(isFullAdmin() && defaultCategories().some(dc=>dc.key===cat.key) && !state.settings.dismissedBuiltins.includes(cat.key)){
+          state.settings.dismissedBuiltins.push(cat.key);
+          await saveSettings();
+        }
         renderAdminTab(holder);
       };
       rightSide.appendChild(delBtn);
@@ -3486,14 +3494,16 @@ function renderEquipmentTypesTab(holder){
   });
 
   if(isFullAdmin()){
-  const missing = defaultCategories().filter(dc => !state.categories.some(c => c.key === dc.key));
+  const dismissed = state.settings.dismissedBuiltins || [];
+  const missing = defaultCategories().filter(dc => !state.categories.some(c => c.key === dc.key) && !dismissed.includes(dc.key));
   if(missing.length){
     const syncCard = el('div','card');
     syncCard.style.cssText = 'border-style:dashed; box-shadow:none;';
     syncCard.innerHTML = '<div class="section-label">New built-in types available</div>';
     syncCard.appendChild(el('div','note', missing.map(m=>m.label).join(', ') + ' — not in your list yet. Adding them won\'t touch or overwrite anything you\'ve already customized.'));
+    const btnRow = el('div'); btnRow.style.cssText = 'display:flex; gap:10px; align-items:center; margin-top:12px; flex-wrap:wrap;';
     const syncBtn = document.createElement('button');
-    syncBtn.className='btn btn-gold'; syncBtn.style.marginTop='12px'; syncBtn.style.width='auto'; syncBtn.style.padding='11px 18px';
+    syncBtn.className='btn btn-gold'; syncBtn.style.width='auto'; syncBtn.style.padding='11px 18px';
     syncBtn.textContent = 'Add ' + missing.length + ' missing type' + (missing.length===1?'':'s');
     syncBtn.onclick = async ()=>{
       syncBtn.disabled = true; syncBtn.textContent = 'Adding...';
@@ -3507,7 +3517,18 @@ function renderEquipmentTypesTab(holder){
       }
       renderAdminTab(holder);
     };
-    syncCard.appendChild(syncBtn);
+    btnRow.appendChild(syncBtn);
+    const dismissBtn = document.createElement('button');
+    dismissBtn.className='btn-link'; dismissBtn.textContent = 'Don\'t suggest ' + (missing.length===1?'this':'these') + ' again';
+    dismissBtn.onclick = async ()=>{
+      dismissBtn.disabled = true;
+      missing.forEach(m=>{ if(!state.settings.dismissedBuiltins.includes(m.key)) state.settings.dismissedBuiltins.push(m.key); });
+      const ok = await saveSettings();
+      if(!ok){ alert('Could not save.' + (lastStorageError?'\n\nDetails: '+lastStorageError:'')); dismissBtn.disabled = false; return; }
+      renderAdminTab(holder);
+    };
+    btnRow.appendChild(dismissBtn);
+    syncCard.appendChild(btnRow);
     holder.appendChild(syncCard);
   }
   }
