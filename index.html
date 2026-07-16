@@ -1233,7 +1233,9 @@ function renderShiftForm(wrap){
   }
 
   if(showChecklist){
-    form.appendChild(el('div','section-label', action==='daily' ? 'Check — mark each Pass or Fail' : 'Pre-trip check — mark each Pass or Fail'));
+    if(!cat.simpleIssueReport){
+      form.appendChild(el('div','section-label', action==='daily' ? 'Check — mark each Pass or Fail' : 'Pre-trip check — mark each Pass or Fail'));
+    }
     const box = el('div','card');
     box.style.padding='4px 12px'; box.style.boxShadow='none'; box.style.marginBottom='14px';
     const checksWrap = el('div'); checksWrap.id='checksWrap';
