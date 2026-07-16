@@ -232,6 +232,7 @@ const SUPABASE_URL = 'https://kyiqildemlstsrrzkcpy.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt5aXFpbGRlbWxzdHNycnprY3B5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI5MTU2MzIsImV4cCI6MjA5ODQ5MTYzMn0.dS9rTqSRghdwIYRQ2JDAxqJGsSucTXv2ldXTV472uw8';
 
 const supa = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+const CHECKLIST_PHOTOS_BUCKET = 'checklist-photos';
 
 /* ---------- auth / profile helpers ---------- */
 // Replaces the old client-side password check entirely. Signing in now goes through real
@@ -251,6 +252,7 @@ function applyProfile(profile){
   state.siteUnlocked = true;
   state.currentDepartmentKey = profile.is_full_admin ? null : profile.department_key;
   state.currentDepartmentName = profile.department_name || '';
+  state.isViewOnly = !!profile.is_view_only;
   state.mode = 'admin';
 }
 async function tryRestoreSession(){
@@ -304,6 +306,50 @@ async function deleteJSON(key){
   }catch(e){
     console.error('storage delete failed', key, e);
     return false;
+  }
+}
+// Shrinks and re-compresses a photo client-side before it ever leaves the phone — drivers are
+// often on weak resort wifi/cell signal, and a raw phone photo can be 5-10MB. Caps the longest
+// side at maxDim and re-encodes as JPEG at the given quality, which in practice lands well
+// under 500KB while still being plenty legible for "what's wrong with this equipment."
+function resizeImageFile(file, maxDim, quality){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onload = ()=>{
+      const img = new Image();
+      img.onload = ()=>{
+        let w = img.width, h = img.height;
+        if(w > maxDim || h > maxDim){
+          if(w >= h){ h = Math.round(h * maxDim / w); w = maxDim; }
+          else { w = Math.round(w * maxDim / h); h = maxDim; }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('Image compression failed')), 'image/jpeg', quality);
+      };
+      img.onerror = ()=> reject(new Error('Could not read that image file'));
+      img.src = reader.result;
+    };
+    reader.onerror = ()=> reject(new Error('Could not read that image file'));
+    reader.readAsDataURL(file);
+  });
+}
+// Uploads a checklist/issue photo to the public checklist-photos storage bucket (works from the
+// no-login QR driver flow, same as the rest of the driver path) and returns its public URL, or
+// null on failure. Callers show their own error messaging when this returns null.
+async function uploadChecklistPhoto(file, busId){
+  if(!supa || !file) return null;
+  try{
+    const resized = await resizeImageFile(file, 1600, 0.72);
+    const path = (busId || 'unassigned') + '/' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2,8) + '.jpg';
+    const { error } = await supa.storage.from(CHECKLIST_PHOTOS_BUCKET).upload(path, resized, { contentType: 'image/jpeg', upsert: false });
+    if(error){ console.error('photo upload failed', error); return null; }
+    const { data } = supa.storage.from(CHECKLIST_PHOTOS_BUCKET).getPublicUrl(path);
+    return (data && data.publicUrl) || null;
+  }catch(e){
+    console.error('photo upload failed', e);
+    return null;
   }
 }
 function uid(prefix){
@@ -371,6 +417,7 @@ function buildFailureEmailBody(bus, driver, mileage, timestamp, failedChecks){
   body += 'Failed checks:\n';
   failedChecks.forEach(c => {
     body += '- ' + c.label + (c.note ? ': ' + c.note : ' (no note provided)') + '\n';
+    if(c.photoUrl) body += '  Photo: ' + c.photoUrl + '\n';
   });
   return body;
 }
@@ -432,6 +479,7 @@ function buildResolvedEmailBody(bus, driver, timestamp, resolvedItems){
   body += 'Resolved item(s):\n';
   resolvedItems.forEach(c => {
     body += '- ' + c.label + (c.note ? ': ' + c.note : '') + '\n';
+    if(c.photoUrl) body += '  Photo: ' + c.photoUrl + '\n';
   });
   return body;
 }
@@ -627,6 +675,7 @@ const state = {
   departments: [],
   currentDepartmentKey: null, // null = full admin; otherwise the signed-in department's key
   currentDepartmentName: '', // display name for the signed-in department (from its profile row)
+  isViewOnly: false, // true for a read-only login (e.g. ownership) — sees everything, can save nothing
   shiftsCache: {}, // busId -> array
   settings: { notifyEmail: '', pmNotifyEmail: '' },
   customLabelTemplates: {}, // Supabase-backed label sheet templates added via Settings → Label Templates
@@ -663,6 +712,11 @@ function checkModeFor(cat){
 function isFullAdmin(){
   return !state.currentDepartmentKey;
 }
+// A view-only login sees everything a full admin sees (currentDepartmentKey is null for it
+// too — see applyProfile) but every save/delete/upload action in the admin UI is locked down.
+function isViewOnly(){
+  return !!state.isViewOnly;
+}
 function categoriesForCurrentUser(){
   if(isFullAdmin()) return state.categories;
   return state.categories.filter(c => c.department === state.currentDepartmentKey);
@@ -691,9 +745,9 @@ function allFlaggedItems(s, cat){
     .filter(([k,v]) => v.status==='fail')
     .map(([k,v]) => {
       const item = cat && cat.checklist ? cat.checklist.find(c=>c.key===k) : null;
-      return {source:'check', label: item ? item.label : k, note: v.note, severity: v.severity||'minor'};
+      return {source:'check', label: item ? item.label : k, note: v.note, severity: v.severity||'minor', photoUrl: v.photoUrl || null};
     }) : [];
-  const fromIssues = (s.issues||[]).map(i => ({source:'issue', label: i.category, note: i.note, severity: i.severity||'minor'}));
+  const fromIssues = (s.issues||[]).map(i => ({source:'issue', label: i.category, note: i.note, severity: i.severity||'minor', photoUrl: i.photoUrl || null}));
   return fromChecks.concat(fromIssues);
 }
 function recordHasUrgent(s, cat){
@@ -776,6 +830,7 @@ async function loadCategories(){
     let changed = false;
     cats.forEach(c => {
       if(!c.checkMode){ c.checkMode = (c.key==='shuttle' ? 'shift' : 'daily'); changed = true; }
+      if(c.simpleIssueReport === undefined){ c.simpleIssueReport = (c.label||'').trim().toLowerCase()==='golf cart'; changed = true; }
     });
     if(changed){ state.categories = cats; await saveSharded('categories', cats, deptKeyOf); }
   }
@@ -934,7 +989,11 @@ function renderSiteGate(){
     }
     applyProfile(profile);
     state.mode = 'admin';
-    if(!profile.is_full_admin){
+    if(profile.is_view_only){
+      state.admin.tab = 'overview';
+      const subtitle = document.querySelector('.brand-text .t2');
+      if(subtitle) subtitle.textContent = (profile.department_name || 'Ownership') + ' — view only';
+    } else if(!profile.is_full_admin){
       state.admin.tab = 'buses';
       const subtitle = document.querySelector('.brand-text .t2');
       if(subtitle) subtitle.textContent = profile.department_name || 'Department';
@@ -1125,7 +1184,7 @@ let formIssues = []; // transient issue rows while building end-of-shift form
 let formPreTrip = {};
 function makeEmptyPreTrip(checklist){
   const o = {};
-  (checklist || []).forEach(c => o[c.key] = {status:null, note:'', severity:'minor'});
+  (checklist || []).forEach(c => o[c.key] = {status:null, note:'', severity:'minor', photoUrl:null, photoUploading:false});
   return o;
 }
 
@@ -1183,7 +1242,18 @@ function renderShiftForm(wrap){
     form.appendChild(box);
   }
 
-  if(showIssues){
+  if(showIssues && cat.simpleIssueReport){
+    // Simple, single "Report an Issue" box — no checklist linkage, no category dropdown, no
+    // add-issue button. Just a description field and a Minor / Urgent choice. Used for equipment
+    // types (e.g. Golf Cart) where the full multi-issue / category flow is more than is needed.
+    form.appendChild(el('div','section-label','Report an Issue'));
+    const box = el('div','card');
+    box.style.padding='4px 12px'; box.style.boxShadow='none'; box.style.marginBottom='14px';
+    const issuesWrap = el('div'); issuesWrap.id='issuesWrap';
+    renderSimpleIssueBox(issuesWrap);
+    box.appendChild(issuesWrap);
+    form.appendChild(box);
+  } else if(showIssues){
     const issuesLabel = action==='daily' ? 'Any additional issues to report?'
       : action==='start' ? 'Report an issue — including urgent / out of service'
       : 'Mechanical issues this shift';
@@ -1193,7 +1263,7 @@ function renderShiftForm(wrap){
     form.appendChild(issuesWrap);
     const addBtn = document.createElement('button');
     addBtn.className='btn-add-issue'; addBtn.textContent='+ Report an issue';
-    addBtn.onclick = ()=>{ formIssues.push({id:uid('is'), category:ISSUE_CATEGORIES[0], severity:'minor', note:''}); renderIssueRows(issuesWrap); };
+    addBtn.onclick = ()=>{ formIssues.push({id:uid('is'), category:ISSUE_CATEGORIES[0], severity:'minor', note:'', photoUrl:null, photoUploading:false}); renderIssueRows(issuesWrap); };
     form.appendChild(addBtn);
   }
 
@@ -1227,6 +1297,53 @@ function renderShiftForm(wrap){
     back.onclick = () => { state.driver.screen='action'; formIssues=[]; formPreTrip={}; render(); };
     wrap.appendChild(back);
   }
+}
+
+// Shared photo-attachment widget for a failed check or a reported issue. `item` is the plain
+// object being edited in place (a formPreTrip[key] entry, or a formIssues[] entry) — it needs
+// photoUrl/photoUploading fields on it. `onChange` re-renders just the containing list so the
+// widget's own state (uploading / has a photo / doesn't yet) reflects immediately.
+function buildPhotoField(item, onChange){
+  const wrap = el('div','photo-field');
+  wrap.style.cssText = 'margin-top:8px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;';
+
+  if(item.photoUploading){
+    wrap.appendChild(el('div','note','Uploading photo...'));
+    return wrap;
+  }
+
+  if(item.photoUrl){
+    const thumb = document.createElement('img');
+    thumb.src = item.photoUrl;
+    thumb.alt = 'Attached photo';
+    thumb.style.cssText = 'width:56px; height:56px; object-fit:cover; border-radius:6px; border:1px solid var(--line); cursor:pointer;';
+    thumb.onclick = ()=> window.open(item.photoUrl, '_blank');
+    wrap.appendChild(thumb);
+    const rmBtn = document.createElement('button');
+    rmBtn.className='btn-link'; rmBtn.textContent='Remove photo'; rmBtn.style.color='var(--bad)';
+    rmBtn.onclick = (e)=>{ e.preventDefault(); item.photoUrl=null; onChange(); };
+    wrap.appendChild(rmBtn);
+    return wrap;
+  }
+
+  const label = document.createElement('label');
+  label.className='btn-link'; label.textContent='📷 Add photo';
+  label.style.cursor='pointer';
+  const input = document.createElement('input');
+  input.type='file'; input.accept='image/*'; input.style.display='none';
+  input.onchange = async ()=>{
+    const file = input.files && input.files[0];
+    if(!file) return;
+    item.photoUploading = true; onChange();
+    const url = await uploadChecklistPhoto(file, state.driver.busId);
+    item.photoUploading = false;
+    if(url) item.photoUrl = url;
+    else alert('Photo upload failed — check your connection and try again.');
+    onChange();
+  };
+  label.appendChild(input);
+  wrap.appendChild(label);
+  return wrap;
 }
 
 function renderCheckRows(container, checklist){
@@ -1274,6 +1391,7 @@ function renderCheckRows(container, checklist){
           urgentBtn.onclick = (e)=>{ e.preventDefault(); formPreTrip[item.key].severity='urgent'; renderCheckRows(container, checklist); };
           sevWrap.appendChild(minorBtn); sevWrap.appendChild(urgentBtn);
           row.appendChild(sevWrap);
+          row.appendChild(buildPhotoField(state_, ()=>renderCheckRows(container, checklist)));
         }
         container.appendChild(row);
         return;
@@ -1305,10 +1423,36 @@ function renderCheckRows(container, checklist){
         ta.oninput = ()=> formPreTrip[item.key].note = ta.value;
         noteWrap.appendChild(ta);
         row.appendChild(noteWrap);
+        row.appendChild(buildPhotoField(state_, ()=>renderCheckRows(container, checklist)));
       }
       container.appendChild(row);
     });
   });
+}
+
+// Simplified single-slot version of the issue box: no category dropdown, no ability to add
+// multiple rows — just a description field and a Minor / Urgent choice. formIssues is still used
+// underneath (so submitShift / notifications / PM logic don't need to know the difference), it's
+// just kept to a single entry and given a generic category label instead of showing a dropdown.
+function renderSimpleIssueBox(container){
+  container.innerHTML='';
+  if(!formIssues.length){
+    formIssues.push({id:uid('is'), category:'General', severity:'minor', note:'', photoUrl:null, photoUploading:false});
+  }
+  const iss = formIssues[0];
+  const ta = document.createElement('textarea');
+  ta.rows=3; ta.placeholder='Description of Issue — describe anything that came up...'; ta.value=iss.note;
+  ta.oninput = ()=> iss.note = ta.value;
+  container.appendChild(ta);
+  const sevWrap = el('div','sev-pill');
+  sevWrap.style.margin='8px 0 0';
+  const minorBtn = el('button','sev-btn sel-minor'+(iss.severity==='minor'?' on':''),'Minor');
+  const urgentBtn = el('button','sev-btn sel-urgent'+(iss.severity==='urgent'?' on':''),'Urgent · Out of service');
+  minorBtn.onclick = (e)=>{ e.preventDefault(); iss.severity='minor'; renderSimpleIssueBox(container); };
+  urgentBtn.onclick = (e)=>{ e.preventDefault(); iss.severity='urgent'; renderSimpleIssueBox(container); };
+  sevWrap.appendChild(minorBtn); sevWrap.appendChild(urgentBtn);
+  container.appendChild(sevWrap);
+  container.appendChild(buildPhotoField(iss, ()=>renderSimpleIssueBox(container)));
 }
 
 function renderIssueRows(container){
@@ -1339,6 +1483,7 @@ function renderIssueRows(container){
     ta.rows=2; ta.placeholder='Describe the issue...'; ta.value=iss.note;
     ta.oninput = ()=> iss.note = ta.value;
     row.appendChild(ta);
+    row.appendChild(buildPhotoField(iss, ()=>renderIssueRows(container)));
     container.appendChild(row);
   });
 }
@@ -1360,12 +1505,17 @@ async function submitShift(bus, action, btn){
     if(Number.isNaN(mileage) || mileage < 0){ alert('That reading looks invalid.'); return; }
   }
 
+  if(Object.values(formPreTrip).some(v=>v.photoUploading) || formIssues.some(i=>i.photoUploading)){
+    alert('A photo is still uploading — give it a moment and try submitting again.');
+    return;
+  }
+
   let failedChecks = [];
   const hasChecklist = (action === 'start' || action === 'daily');
   if(hasChecklist){
     const unanswered = cat.checklist.filter(c => !c.alwaysNote && (!formPreTrip[c.key] || !formPreTrip[c.key].status));
     if(unanswered.length){ alert('Please mark every check as Pass or Fail before submitting.'); return; }
-    failedChecks = cat.checklist.filter(c => formPreTrip[c.key].status==='fail').map(c => ({label:c.label, note:formPreTrip[c.key].note, severity:formPreTrip[c.key].severity||'minor'}));
+    failedChecks = cat.checklist.filter(c => formPreTrip[c.key].status==='fail').map(c => ({label:c.label, note:formPreTrip[c.key].note, severity:formPreTrip[c.key].severity||'minor', photoUrl:formPreTrip[c.key].photoUrl||null}));
   }
 
   btn.disabled = true; btn.textContent = 'Saving...';
@@ -1378,7 +1528,7 @@ async function submitShift(bus, action, btn){
     timestamp: new Date().toISOString(),
     notes,
     preTrip: hasChecklist ? JSON.parse(JSON.stringify(formPreTrip)) : undefined,
-    issues: formIssues.map(i=>({category:i.category, severity:i.severity, note:i.note})),
+    issues: formIssues.filter(i=>i.note && i.note.trim()).map(i=>({category:i.category, severity:i.severity, note:i.note, photoUrl:i.photoUrl||null})),
     issuesResolved: false
   };
 
@@ -1403,10 +1553,11 @@ async function submitShift(bus, action, btn){
 
   // Every flagged item (any failed check, any reported issue) triggers the email — severity is still
   // recorded and shown in Admin, it just no longer gates whether the notification goes out.
-  const allFlagged = failedChecks.concat(record.issues.map(i=>({label: i.category, note: i.note, severity: i.severity, isIssue:true})));
+  const allFlagged = failedChecks.concat(record.issues.map(i=>({label: i.category, note: i.note, severity: i.severity, isIssue:true, photoUrl: i.photoUrl})));
   const emailItems = allFlagged.map(i=>({
     label: (i.isIssue ? i.label + (i.severity==='urgent' ? ' — urgent / out of service' : '') : i.label) + (i.severity==='urgent' ? ' ⚠ URGENT' : ''),
-    note: i.note
+    note: i.note,
+    photoUrl: i.photoUrl || null
   }));
 
   let emailResult = null;
@@ -1440,10 +1591,10 @@ function flaggedItemsFromRecord(rec, cat){
     .map(([k,v]) => {
       const item = cat.checklist.find(c=>c.key===k);
       const label = item ? item.label : k;
-      return {label: label + (v.severity==='urgent' ? ' ⚠ URGENT' : ''), note: v.note};
+      return {label: label + (v.severity==='urgent' ? ' ⚠ URGENT' : ''), note: v.note, photoUrl: v.photoUrl || null};
     });
   const issueItems = (rec.issues||[])
-    .map(i=>({label: i.category + (i.severity==='urgent' ? ' — urgent / out of service ⚠ URGENT' : ''), note: i.note}));
+    .map(i=>({label: i.category + (i.severity==='urgent' ? ' — urgent / out of service ⚠ URGENT' : ''), note: i.note, photoUrl: i.photoUrl || null}));
   return failItems.concat(issueItems);
 }
 
@@ -1586,6 +1737,7 @@ function renderAdmin(){
     state.siteUnlocked = false;
     state.currentDepartmentKey = null;
     state.currentDepartmentName = '';
+    state.isViewOnly = false;
     state.mode = 'driver';
     state.admin.tab = 'overview';
     const subtitle = document.querySelector('.brand-text .t2');
@@ -1595,17 +1747,22 @@ function renderAdmin(){
   logoutRow.appendChild(logoutBtn);
   wrap.appendChild(logoutRow);
 
-  if(!isFullAdmin()){
+  if(isViewOnly()){
+    const voBanner = el('div','note');
+    voBanner.style.cssText = 'background:#eaf1f9; border:1px solid var(--navy); border-radius:8px; padding:10px 14px; margin-bottom:12px; color:var(--navy); font-weight:600;';
+    voBanner.textContent = 'View-only access — browse freely, but nothing here can be added, changed, or deleted.';
+    wrap.appendChild(voBanner);
+  } else if(!isFullAdmin()){
     const deptBanner = el('div','note');
     deptBanner.style.cssText = 'background:#eaf1f9; border:1px solid var(--navy); border-radius:8px; padding:10px 14px; margin-bottom:12px; color:var(--navy); font-weight:600;';
     deptBanner.textContent = currentDepartmentName() + ' — showing only this department\'s equipment.';
     wrap.appendChild(deptBanner);
   }
 
-  const currentDept = !isFullAdmin() ? state.departments.find(d=>d.key===state.currentDepartmentKey) : null;
+  const currentDept = (!isFullAdmin() && !isViewOnly()) ? state.departments.find(d=>d.key===state.currentDepartmentKey) : null;
   const hiddenTabs = (currentDept && currentDept.hiddenTabs) || [];
   const allTabs = [['overview','Overview'], ...TOGGLEABLE_ADMIN_TABS.filter(([key])=>!hiddenTabs.includes(key))];
-  if(isFullAdmin()){
+  if(isFullAdmin() && !isViewOnly()){
     allTabs.push(['departments','Departments']);
     allTabs.push(['settings','Settings']);
   }
@@ -1645,8 +1802,8 @@ function renderAdmin(){
 async function renderAdminTab(holder){
   const all = await loadAllShifts();
   holder.innerHTML='';
-  if(!isFullAdmin() && (state.admin.tab==='settings' || state.admin.tab==='departments')){
-    state.admin.tab = 'overview'; // department sessions can't reach these, even if state was fiddled with
+  if((!isFullAdmin() || isViewOnly()) && (state.admin.tab==='settings' || state.admin.tab==='departments')){
+    state.admin.tab = 'overview'; // department and view-only sessions can't reach these, even if state was fiddled with
   }
   if(!isFullAdmin()){
     const dept = state.departments.find(d=>d.key===state.currentDepartmentKey);
@@ -1659,14 +1816,29 @@ async function renderAdminTab(holder){
   else if(state.admin.tab==='pm') renderPmTab(holder);
   else if(state.admin.tab==='issues') renderIssuesTab(holder, all);
   else if(state.admin.tab==='log') renderLogTab(holder, all);
-  else if(state.admin.tab==='departments' && isFullAdmin()) renderDepartmentsTab(holder);
-  else if(state.admin.tab==='settings' && isFullAdmin()) renderSettingsTab(holder);
+  else if(state.admin.tab==='departments' && isFullAdmin() && !isViewOnly()) renderDepartmentsTab(holder);
+  else if(state.admin.tab==='settings' && isFullAdmin() && !isViewOnly()) renderSettingsTab(holder);
   else if(state.admin.tab==='account') renderAccountTab(holder);
+  // View-only logins (e.g. ownership) get every tab's full content, rendered above, but every
+  // control that could add, save, delete, or upload something gets disabled right after —
+  // simpler and safer than threading a read-only branch through each tab's render function.
+  if(state.admin.tab !== 'account') lockDownForViewOnly(holder);
   // Keep "Add" and "Sort/Filter" bars pinned to the top of the screen regardless of which
   // tab just rendered or how long its list is. Runs after layout settles (fonts/images can
   // still shift heights right after paint), and again shortly after in case they do.
   requestAnimationFrame(positionPinned);
   setTimeout(positionPinned, 200);
+}
+
+// Disables every button and file-upload input in the current tab for a view-only login.
+// Everything else (sort/filter dropdowns, checkboxes used only for on-screen selection, text
+// inputs) is left alone since none of it persists anything by itself — every actual save,
+// delete, resolve, mark-done, resync, or CSV-import-confirm action in this app is wired to a
+// button click, so disabling buttons is sufficient to make the whole tab inert to changes.
+function lockDownForViewOnly(holder){
+  if(!isViewOnly()) return;
+  holder.querySelectorAll('button').forEach(function(b){ b.disabled = true; });
+  holder.querySelectorAll('input[type="file"]').forEach(function(i){ i.disabled = true; });
 }
 
 // Standing rule: any "Add ___" card or sort/filter toolbar sitting above a list gets the
@@ -2054,9 +2226,11 @@ function renderAccountTab(holder){
   card.innerHTML = '<div class="section-label">Your password</div>';
   const intro = el('div','note');
   intro.style.marginBottom = '12px';
-  intro.textContent = isFullAdmin()
-    ? 'Change the password for the full-admin login you\'re currently signed in with.'
-    : 'Change the password for the ' + currentDepartmentName() + ' login you\'re currently signed in with.';
+  intro.textContent = isViewOnly()
+    ? 'Change the password for this view-only login.'
+    : isFullAdmin()
+      ? 'Change the password for the full-admin login you\'re currently signed in with.'
+      : 'Change the password for the ' + currentDepartmentName() + ' login you\'re currently signed in with.';
   card.appendChild(intro);
 
   const pwField = el('div','field'); pwField.style.maxWidth='320px';
@@ -3529,7 +3703,7 @@ function renderEquipmentTypesTab(holder){
     cartBtn.textContent = '+ Add "Golf Cart" with Tires / Body / Driveability checklist';
     cartBtn.onclick = async ()=>{
       const newCat = {
-        key: uid('cat'), label: 'Golf Cart', trackingUnit: 'none', checkMode: 'daily',
+        key: uid('cat'), label: 'Golf Cart', trackingUnit: 'none', checkMode: 'daily', simpleIssueReport: true,
         checklist: [
           {key: uid('chk'), label:'Tire tread & wear', section:'Tires'},
           {key: uid('chk'), label:'Tire pressure', section:'Tires'},
@@ -3712,6 +3886,15 @@ function renderEquipmentTypesTab(holder){
     }
     head.appendChild(rightSide);
     card.appendChild(head);
+
+    const simpleIssueLabel = document.createElement('label');
+    simpleIssueLabel.style.cssText = 'display:flex; align-items:center; gap:6px; font-size:12px; color:var(--ink-soft); margin:2px 0 10px; cursor:pointer;';
+    const simpleIssueChk = document.createElement('input');
+    simpleIssueChk.type='checkbox'; simpleIssueChk.checked = !!cat.simpleIssueReport;
+    simpleIssueChk.onchange = ()=> cat.simpleIssueReport = simpleIssueChk.checked;
+    simpleIssueLabel.appendChild(simpleIssueChk);
+    simpleIssueLabel.appendChild(document.createTextNode('Use a simple "Report an Issue" box (one description field + Minor/Urgent) instead of the full multi-issue list with categories'));
+    card.appendChild(simpleIssueLabel);
 
     card.appendChild(el('div','section-label','Pre-trip checklist items'));
     const itemsHint = el('div','note');
@@ -4156,7 +4339,7 @@ function renderIssuesTab(holder, all){
     card.appendChild(el('div','empty','No issues in this view.'));
   } else {
     const table = document.createElement('table');
-    table.innerHTML = '<thead><tr><th>Equipment</th><th>Reported</th><th>Driver</th><th>Source</th><th>Category</th><th>Severity</th><th>Note</th><th>Status</th><th></th></tr></thead>';
+    table.innerHTML = '<thead><tr><th>Equipment</th><th>Reported</th><th>Driver</th><th>Source</th><th>Category</th><th>Severity</th><th>Note</th><th>Photo</th><th>Status</th><th></th></tr></thead>';
     const tbody = document.createElement('tbody');
     filtered.forEach(r=>{
       const tr = document.createElement('tr');
@@ -4167,6 +4350,7 @@ function renderIssuesTab(holder, all){
         <td>${escapeHtml(r.item.label)}</td>
         <td>${r.item.severity==='urgent' ? '<span class="tag open">Urgent</span>' : '<span class="tag minor">Minor</span>'}</td>
         <td style="max-width:220px;">${escapeHtml(r.item.note||'—')}</td>
+        <td>${r.item.photoUrl ? `<a href="${escapeHtml(r.item.photoUrl)}" target="_blank" rel="noopener"><img src="${escapeHtml(r.item.photoUrl)}" alt="Issue photo" style="width:44px;height:44px;object-fit:cover;border-radius:5px;border:1px solid var(--line);"></a>` : '—'}</td>
         <td>${r.shift.issuesResolved ? '<span class="tag resolved">Resolved</span>' : '<span class="tag open">Open</span>'}</td>`;
       const tdBtn = document.createElement('td');
       const btn = document.createElement('button');
@@ -4190,7 +4374,8 @@ function renderIssuesTab(holder, all){
           const cat = categoryFor(bus);
           const items = allFlaggedItems(target, cat).map(i => ({
             label: i.label + (i.severity==='urgent' ? ' ⚠ URGENT' : ''),
-            note: i.note
+            note: i.note,
+            photoUrl: i.photoUrl || null
           }));
           if(items.length) await sendResolvedNotification(bus, target.driver, target.timestamp, items);
         }
