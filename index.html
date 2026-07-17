@@ -4102,12 +4102,22 @@ function renderPmTab(holder){
 
   const filterVal = state.admin.pmTypeFilter || 'all';
   const locationVal = state.admin.pmLocationFilter || 'all';
+  const pmSortVal = state.admin.pmSort || 'id';
   let visibleBuses = busesForCurrentUser().filter(b => {
     const typeOk = filterVal==='all' || (b.category||'shuttle')===filterVal;
     const locOk = locationVal==='all' || locationForBus(b)===locationVal;
     return typeOk && locOk && categoryFor(b).trackingUnit !== 'none';
   });
-  visibleBuses.sort((a,b)=> a.id.localeCompare(b.id, undefined, {numeric:true}));
+  visibleBuses = visibleBuses.slice().sort((a,b)=>{
+    if(pmSortVal==='type') return categoryFor(a).label.localeCompare(categoryFor(b).label) || a.id.localeCompare(b.id, undefined, {numeric:true});
+    if(pmSortVal==='location') return locationForBus(a).localeCompare(locationForBus(b)) || a.id.localeCompare(b.id, undefined, {numeric:true});
+    if(pmSortVal==='due'){
+      const dueA = (a.pmItems||[]).some(p => lastMileage(a.id) != null && lastMileage(a.id) >= (p.lastDoneReading||0) + Number(p.intervalValue||0));
+      const dueB = (b.pmItems||[]).some(p => lastMileage(b.id) != null && lastMileage(b.id) >= (p.lastDoneReading||0) + Number(p.intervalValue||0));
+      return ((dueB?1:0) - (dueA?1:0)) || a.id.localeCompare(b.id, undefined, {numeric:true});
+    }
+    return a.id.localeCompare(b.id, undefined, {numeric:true});
+  });
 
   const toolbar = el('div','toolbar pin-top');
   const filterSel = document.createElement('select');
@@ -4122,6 +4132,12 @@ function renderPmTab(holder){
   locSel.onchange = ()=>{ state.admin.pmLocationFilter = locSel.value; renderAdminTab(holder); };
   toolbar.appendChild(document.createTextNode('Location: '));
   toolbar.appendChild(locSel);
+  const pmSortSel = document.createElement('select');
+  pmSortSel.innerHTML = '<option value="id">Sort: ID</option><option value="type">Sort: Type</option><option value="location">Sort: Location</option><option value="due">Sort: Due first</option>';
+  pmSortSel.value = pmSortVal;
+  pmSortSel.onchange = ()=>{ state.admin.pmSort = pmSortSel.value; renderAdminTab(holder); };
+  toolbar.appendChild(document.createTextNode('Sort by: '));
+  toolbar.appendChild(pmSortSel);
   holder.appendChild(toolbar);
 
   const anyTrackable = busesForCurrentUser().some(b => categoryFor(b).trackingUnit !== 'none');
@@ -4330,11 +4346,29 @@ function renderIssuesTab(holder, all){
   sel.onchange = ()=>{ state.admin.issueFilter = sel.value; renderAdminTab(holder); };
   toolbar.appendChild(document.createTextNode('Show: '));
   toolbar.appendChild(sel);
+
+  const sortSel = document.createElement('select');
+  sortSel.innerHTML = '<option value="date">Sort: Reported (newest first)</option>' +
+    '<option value="equipment">Sort: Equipment</option>' +
+    '<option value="driver">Sort: Driver</option>' +
+    '<option value="severity">Sort: Severity (urgent first)</option>' +
+    '<option value="status">Sort: Status (open first)</option>';
+  sortSel.value = state.admin.issueSort || 'date';
+  sortSel.onchange = ()=>{ state.admin.issueSort = sortSel.value; renderAdminTab(holder); };
+  toolbar.appendChild(document.createTextNode('Sort by: '));
+  toolbar.appendChild(sortSel);
   holder.appendChild(toolbar);
 
   const filter = state.admin.issueFilter || 'open';
+  const issueSortVal = state.admin.issueSort || 'date';
   const filtered = rows.filter(r => filter==='all' ? true : filter==='resolved' ? r.shift.issuesResolved : !r.shift.issuesResolved);
-  filtered.sort((a,b)=> new Date(b.shift.timestamp) - new Date(a.shift.timestamp));
+  filtered.sort((a,b)=>{
+    if(issueSortVal==='equipment') return a.shift.busId.localeCompare(b.shift.busId, undefined, {numeric:true}) || (new Date(b.shift.timestamp) - new Date(a.shift.timestamp));
+    if(issueSortVal==='driver') return (a.shift.driver||'').localeCompare(b.shift.driver||'') || (new Date(b.shift.timestamp) - new Date(a.shift.timestamp));
+    if(issueSortVal==='severity') return ((b.item.severity==='urgent'?1:0) - (a.item.severity==='urgent'?1:0)) || (new Date(b.shift.timestamp) - new Date(a.shift.timestamp));
+    if(issueSortVal==='status') return ((a.shift.issuesResolved?1:0) - (b.shift.issuesResolved?1:0)) || (new Date(b.shift.timestamp) - new Date(a.shift.timestamp));
+    return new Date(b.shift.timestamp) - new Date(a.shift.timestamp); // date, newest first (default)
+  });
 
   const card = el('div','card');
   if(!filtered.length){
@@ -4415,6 +4449,16 @@ function renderLogTab(holder, all){
   toolbar.appendChild(document.createTextNode('Location: '));
   toolbar.appendChild(locSel);
 
+  const sortSel = document.createElement('select');
+  sortSel.innerHTML = '<option value="date">Sort: Date (newest first)</option>' +
+    '<option value="vehicle">Sort: Vehicle ID</option>' +
+    '<option value="driver">Sort: Driver</option>' +
+    '<option value="issues">Sort: Issues (most first)</option>';
+  sortSel.value = state.admin.logSort || 'date';
+  sortSel.onchange = ()=>{ state.admin.logSort = sortSel.value; renderAdminTab(holder); };
+  toolbar.appendChild(document.createTextNode('Sort by: '));
+  toolbar.appendChild(sortSel);
+
   const exportBtn = document.createElement('button');
   exportBtn.className='btn btn-outline btn-sm'; exportBtn.textContent='Export CSV';
   exportBtn.onclick = ()=> exportCsv(scopedAll);
@@ -4422,6 +4466,7 @@ function renderLogTab(holder, all){
 
   const busFilter = state.admin.logBus || 'all';
   const locFilter = state.admin.logLocation || 'all';
+  const sortVal = state.admin.logSort || 'date';
 
   if(busFilter !== 'all'){
     const clearBtn = document.createElement('button');
@@ -4441,21 +4486,34 @@ function renderLogTab(holder, all){
     filtered = filtered.filter(s => locationForBus(state.buses.find(b=>b.id===s.busId) || {id:s.busId}) === locFilter);
   }
 
+  // Enrich each record with the derived fields the table (and every sort option) needs,
+  // computed once up front rather than recomputed per-row during render.
+  const enriched = filtered.map(s=>{
+    const sBus = state.buses.find(b=>b.id===s.busId) || {id:s.busId};
+    const sUnit = unitLabel(categoryFor(sBus).trackingUnit);
+    const failCount = s.preTrip ? Object.values(s.preTrip).filter(c=>c.status==='fail').length : 0;
+    const issueCount = (s.issues && s.issues.length) || 0;
+    const hasUrgentIssue = recordHasUrgent(s, categoryFor(sBus));
+    return {s, sBus, sUnit, failCount, issueCount, hasUrgentIssue};
+  });
+
+  enriched.sort((a,b)=>{
+    if(sortVal==='vehicle') return a.s.busId.localeCompare(b.s.busId, undefined, {numeric:true}) || (new Date(b.s.timestamp) - new Date(a.s.timestamp));
+    if(sortVal==='driver') return (a.s.driver||'').localeCompare(b.s.driver||'') || (new Date(b.s.timestamp) - new Date(a.s.timestamp));
+    if(sortVal==='issues') return (b.issueCount - a.issueCount) || (new Date(b.s.timestamp) - new Date(a.s.timestamp));
+    return new Date(b.s.timestamp) - new Date(a.s.timestamp); // date, newest first (default)
+  });
+
   const card = el('div','card');
-  if(!filtered.length){
+  if(!enriched.length){
     card.appendChild(el('div','empty','No shift logs yet.'));
   } else {
     const table = document.createElement('table');
     table.innerHTML = '<thead><tr><th>When</th><th>Equipment</th><th>Driver</th><th>Action</th><th>Reading</th><th>Issues</th><th>Notes</th><th></th></tr></thead>';
     const tbody = document.createElement('tbody');
-    filtered.forEach(s=>{
+    enriched.forEach(({s, sUnit, failCount, issueCount, hasUrgentIssue})=>{
       const tr = document.createElement('tr');
-      const sBus = state.buses.find(b=>b.id===s.busId) || {id:s.busId};
-      const sUnit = unitLabel(categoryFor(sBus).trackingUnit);
       let issueCell = '—';
-      const failCount = s.preTrip ? Object.values(s.preTrip).filter(c=>c.status==='fail').length : 0;
-      const issueCount = (s.issues && s.issues.length) || 0;
-      const hasUrgentIssue = recordHasUrgent(s, categoryFor(sBus));
       if(s.action==='start' || s.action==='daily'){
         const parts = [];
         if(s.preTrip) parts.push(failCount ? failCount+' failed' : 'All passed');
