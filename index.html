@@ -530,6 +530,7 @@ const TOGGLEABLE_ADMIN_TABS = [
   ['buses','Equipment & QR Codes'],
   ['types','Equipment Types'],
   ['pm','Preventive Maintenance'],
+  ['pmdue','PM Due'],
   ['issues','Mechanical Issues'],
   ['log','Shift Log']
 ];
@@ -1816,6 +1817,7 @@ async function renderAdminTab(holder){
   else if(state.admin.tab==='buses') renderBusesTab(holder);
   else if(state.admin.tab==='types') renderEquipmentTypesTab(holder);
   else if(state.admin.tab==='pm') renderPmTab(holder);
+  else if(state.admin.tab==='pmdue') renderPmDueTab(holder);
   else if(state.admin.tab==='issues') renderIssuesTab(holder, all);
   else if(state.admin.tab==='log') renderLogTab(holder, all);
   else if(state.admin.tab==='departments' && isFullAdmin() && !isViewOnly()) renderDepartmentsTab(holder);
@@ -4330,6 +4332,161 @@ function renderPmTab(holder){
 
     holder.appendChild(card);
   });
+}
+
+// Flat, filterable/sortable list of every PM item across the current user's trackable
+// equipment — the "what's due" companion to the per-unit Preventive Maintenance tab.
+// Built to match the Mechanical Issues tab: pinned toolbar (Show / Type / Location / Sort),
+// then one scrollable table with a one-click "Mark done" per row. Marking done here sets the
+// item's last-done reading to the unit's current reading and saves, same as the PM tab.
+function renderPmDueTab(holder){
+  // "Upcoming" threshold: an item not yet due counts as coming due soon once the reading is
+  // within this fraction of its interval of the due point (self-scaling — 25 hrs on a 250-hr
+  // interval, 50 mi on a 500-mi interval).
+  const SOON_FRACTION = 0.10;
+
+  const rows = [];
+  busesForCurrentUser().forEach(b => {
+    const cat = categoryFor(b);
+    if(cat.trackingUnit === 'none') return; // PM only applies to equipment that tracks hrs/miles
+    const unit = unitLabel(cat.trackingUnit);
+    const current = lastMileage(b.id);
+    const hasReading = current != null;
+    (b.pmItems || []).forEach(p => {
+      const interval = Number(p.intervalValue || 0);
+      const lastDone = p.lastDoneReading || 0;
+      const dueAt = lastDone + interval;
+      const remaining = hasReading ? (dueAt - current) : null; // <=0 means overdue
+      const isDue = hasReading && current >= dueAt;
+      const soon = hasReading && !isDue && interval > 0 && remaining <= interval * SOON_FRACTION;
+      rows.push({ bus:b, cat, item:p, unit, current, dueAt, lastDone, interval, hasReading, isDue, soon, remaining });
+    });
+  });
+
+  const intro = el('div','note');
+  intro.style.margin = '2px 2px 14px';
+  intro.textContent = 'Everything on a PM schedule across your equipment, in one list — sorted so what\'s due floats to the top. "Soon" means the unit is within 10% of its interval of coming due. Mark an item done here and it resets to the unit\'s current reading, just like on the Preventive Maintenance tab.';
+  holder.appendChild(intro);
+
+  const showVal = state.admin.pmDueFilter || 'due';
+  const typeVal = state.admin.pmDueTypeFilter || 'all';
+  const locVal = state.admin.pmDueLocationFilter || 'all';
+  const sortVal = state.admin.pmDueSort || 'status';
+
+  const toolbar = el('div','toolbar pin-top');
+  const showSel = document.createElement('select');
+  showSel.innerHTML = '<option value="due">Due now</option><option value="soon">Due + upcoming</option><option value="all">All</option>';
+  showSel.value = showVal;
+  showSel.onchange = ()=>{ state.admin.pmDueFilter = showSel.value; renderAdminTab(holder); };
+  toolbar.appendChild(document.createTextNode('Show: '));
+  toolbar.appendChild(showSel);
+
+  const typeSel = document.createElement('select');
+  typeSel.innerHTML = '<option value="all">All types</option>' + categoriesForCurrentUser().filter(c=>c.trackingUnit!=='none').map(c=>`<option value="${escapeHtml(c.key)}">${escapeHtml(c.label)}</option>`).join('');
+  typeSel.value = typeVal;
+  typeSel.onchange = ()=>{ state.admin.pmDueTypeFilter = typeSel.value; renderAdminTab(holder); };
+  toolbar.appendChild(document.createTextNode('Type: '));
+  toolbar.appendChild(typeSel);
+
+  const locSel = document.createElement('select');
+  locSel.innerHTML = '<option value="all">All locations</option>' + LOCATIONS.map(l=>`<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('');
+  locSel.value = locVal;
+  locSel.onchange = ()=>{ state.admin.pmDueLocationFilter = locSel.value; renderAdminTab(holder); };
+  toolbar.appendChild(document.createTextNode('Location: '));
+  toolbar.appendChild(locSel);
+
+  const sortSel = document.createElement('select');
+  sortSel.innerHTML = '<option value="status">Sort: Status (due first)</option>' +
+    '<option value="overdue">Sort: Most overdue</option>' +
+    '<option value="equipment">Sort: Equipment</option>' +
+    '<option value="location">Sort: Location</option>' +
+    '<option value="type">Sort: Type</option>';
+  sortSel.value = sortVal;
+  sortSel.onchange = ()=>{ state.admin.pmDueSort = sortSel.value; renderAdminTab(holder); };
+  toolbar.appendChild(document.createTextNode('Sort by: '));
+  toolbar.appendChild(sortSel);
+  holder.appendChild(toolbar);
+
+  const filtered = rows.filter(r => {
+    if(typeVal !== 'all' && (r.bus.category||'shuttle') !== typeVal) return false;
+    if(locVal !== 'all' && locationForBus(r.bus) !== locVal) return false;
+    if(showVal === 'due') return r.isDue;
+    if(showVal === 'soon') return r.isDue || r.soon;
+    return true; // all
+  });
+
+  // Rank for status sort + tie-breaks: due (0) -> soon (1) -> ok (2) -> no reading (3).
+  const rank = r => r.isDue ? 0 : r.soon ? 1 : r.hasReading ? 2 : 3;
+  const remOrInf = r => r.remaining == null ? Infinity : r.remaining; // most overdue = smallest (most negative)
+  filtered.sort((a,b)=>{
+    if(sortVal==='equipment') return a.bus.id.localeCompare(b.bus.id, undefined, {numeric:true});
+    if(sortVal==='location') return locationForBus(a.bus).localeCompare(locationForBus(b.bus)) || a.bus.id.localeCompare(b.bus.id, undefined, {numeric:true});
+    if(sortVal==='type') return a.cat.label.localeCompare(b.cat.label) || a.bus.id.localeCompare(b.bus.id, undefined, {numeric:true});
+    if(sortVal==='overdue') return remOrInf(a) - remOrInf(b) || a.bus.id.localeCompare(b.bus.id, undefined, {numeric:true});
+    // status (default)
+    return rank(a) - rank(b) || remOrInf(a) - remOrInf(b) || a.bus.id.localeCompare(b.bus.id, undefined, {numeric:true});
+  });
+
+  const card = el('div','card');
+  if(!filtered.length){
+    card.appendChild(el('div','empty', showVal==='due' ? 'Nothing due right now — you\'re caught up.' : 'No PM items in this view.'));
+    holder.appendChild(card);
+    return;
+  }
+
+  const table = document.createElement('table');
+  table.innerHTML = '<thead><tr><th>Equipment</th><th>PM item</th><th>Type</th><th>Location</th><th>Every</th><th>Last done</th><th>Current</th><th>Due at</th><th>Status</th><th></th></tr></thead>';
+  const tbody = document.createElement('tbody');
+  filtered.forEach(r=>{
+    let statusTag;
+    if(!r.hasReading){
+      statusTag = '<span class="tag" style="background:#eef1f5; color:var(--ink-soft);">No readings</span>';
+    } else if(r.isDue){
+      const over = r.current - r.dueAt;
+      statusTag = '<span class="tag open">Due' + (over>0 ? ' · ' + over.toLocaleString() + ' ' + r.unit + ' over' : '') + '</span>';
+    } else if(r.soon){
+      statusTag = '<span class="tag minor">Soon · ' + r.remaining.toLocaleString() + ' ' + r.unit + ' left</span>';
+    } else {
+      statusTag = '<span class="tag resolved">OK</span>';
+    }
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td><strong>${escapeHtml(r.bus.id)}</strong><div style="font-size:11.5px; color:var(--ink-soft);">${escapeHtml(r.bus.name||'')}</div></td>
+      <td>${escapeHtml(r.item.label||'—')}</td>
+      <td>${escapeHtml(r.cat.label)}</td>
+      <td>${escapeHtml(locationForBus(r.bus))}</td>
+      <td class="mono">${r.interval ? r.interval.toLocaleString() + ' ' + r.unit : '—'}</td>
+      <td class="mono">${r.lastDone.toLocaleString()} ${r.unit}</td>
+      <td class="mono">${r.hasReading ? r.current.toLocaleString() + ' ' + r.unit : '—'}</td>
+      <td class="mono">${r.dueAt.toLocaleString()} ${r.unit}</td>
+      <td>${statusTag}</td>`;
+    const tdBtn = document.createElement('td');
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-outline btn-sm';
+    btn.textContent = 'Mark done';
+    btn.onclick = async ()=>{
+      if(!r.hasReading){
+        alert('No readings yet for ' + r.bus.id + '. Log a shift for this unit first, or set the reading on the Preventive Maintenance tab.');
+        return;
+      }
+      btn.disabled = true; btn.textContent = 'Saving...';
+      r.item.lastDoneReading = r.current;
+      const ok = await saveBuses();
+      if(!ok){
+        btn.disabled = false; btn.textContent = 'Mark done';
+        alert('Could not save.' + (lastStorageError ? '\n\nDetails: ' + lastStorageError : ''));
+        return;
+      }
+      renderAdminTab(holder);
+    };
+    tdBtn.appendChild(btn);
+    tr.appendChild(tdBtn);
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  const scrollWrap = el('div','table-scroll');
+  scrollWrap.appendChild(table);
+  card.appendChild(scrollWrap);
+  holder.appendChild(card);
 }
 
 function renderIssuesTab(holder, all){
