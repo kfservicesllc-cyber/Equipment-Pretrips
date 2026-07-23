@@ -4494,7 +4494,7 @@ function renderIssuesTab(holder, all){
   const rows = [];
   all.filter(s=>myBusIds.has(s.busId)).forEach(s => {
     const cat = categoryFor(state.buses.find(b=>b.id===s.busId) || {id:s.busId});
-    allFlaggedItems(s, cat).forEach(item => rows.push({shift:s, item}));
+    allFlaggedItems(s, cat).forEach(item => rows.push({shift:s, item, cat}));
   });
   const toolbar = el('div','toolbar pin-top');
   const sel = document.createElement('select');
@@ -4532,13 +4532,15 @@ function renderIssuesTab(holder, all){
     card.appendChild(el('div','empty','No issues in this view.'));
   } else {
     const table = document.createElement('table');
-    table.innerHTML = '<thead><tr><th>Equipment</th><th>Reported</th><th>Driver</th><th>Source</th><th>Category</th><th>Severity</th><th>Note</th><th>Photo</th><th>Status</th><th></th></tr></thead>';
+    table.innerHTML = '<thead><tr><th>Equipment</th><th>Reported</th><th>Driver</th><th>Reading</th><th>Source</th><th>Category</th><th>Severity</th><th>Note</th><th>Photo</th><th>Status</th><th></th></tr></thead>';
     const tbody = document.createElement('tbody');
     filtered.forEach(r=>{
       const tr = document.createElement('tr');
+      const readingCell = r.shift.mileage!=null ? r.shift.mileage.toLocaleString()+' '+unitLabel(r.cat.trackingUnit) : '—';
       tr.innerHTML = `<td><strong>${escapeHtml(r.shift.busId)}</strong></td>
         <td>${fmtDT(r.shift.timestamp)}</td>
         <td>${escapeHtml(r.shift.driver)}</td>
+        <td class="mono">${readingCell}</td>
         <td>${r.item.source==='check' ? '<span class="tag minor">Checklist</span>' : '<span class="tag resolved" style="background:#e6e0f0;color:#5a3d99;">Reported</span>'}</td>
         <td>${escapeHtml(r.item.label)}</td>
         <td>${r.item.severity==='urgent' ? '<span class="tag open">Urgent</span>' : '<span class="tag minor">Minor</span>'}</td>
