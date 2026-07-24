@@ -191,6 +191,20 @@
   .pin-top{position:sticky; z-index:12;}
   .card.pin-top{background:var(--paper);}
   .toolbar.pin-top{background:var(--cream); padding:8px 2px 10px; margin-bottom:0;}
+  /* Collapsible pinned bars: initPinCollapse() (JS) wraps each .pin-top's content in a
+     .pin-body and prepends a slim .pin-head (title + chevron). Clicking the head toggles
+     .pin-collapsed, hiding the body so the bar shrinks to one line. State is remembered
+     per bar in localStorage so a bar stays collapsed across tabs/visits. */
+  .pin-top.pin-wrap{display:block;}
+  .pin-head{display:flex; align-items:center; justify-content:space-between; gap:10px; cursor:pointer; user-select:none; -webkit-user-select:none;}
+  .pin-head .section-label{margin-bottom:0;}
+  .pin-head-title{font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-soft); font-weight:600;}
+  .pin-chev{font-size:12px; color:var(--ink-soft); padding:2px 6px; transition:transform .15s ease; flex:none;}
+  .pin-collapsed .pin-chev{transform:rotate(-90deg);}
+  .pin-wrap .pin-body{margin-top:10px;}
+  .toolbar.pin-top .pin-body{display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:8px;}
+  .pin-collapsed .pin-body{display:none;}
+  .card.pin-top.pin-collapsed{padding-top:10px; padding-bottom:10px;}
   /* A list sitting below the pinned add/sort bars in a tab. sizeScrollLists() (JS) gives it
      its own height (filling whatever viewport space is left under the pinned stack) and its
      own scrollbar, so paging through a long list doesn't require scrolling past the pinned
@@ -2063,6 +2077,9 @@ async function renderAdminTab(holder){
   // control that could add, save, delete, or upload something gets disabled right after —
   // simpler and safer than threading a read-only branch through each tab's render function.
   if(state.admin.tab !== 'account') lockDownForViewOnly(holder);
+  // Make every pinned bar collapsible before measuring — collapsed bars change the
+  // heights positionPinned() works from.
+  initPinCollapse(holder);
   // Keep "Add" and "Sort/Filter" bars pinned to the top of the screen regardless of which
   // tab just rendered or how long its list is. Runs after layout settles (fonts/images can
   // still shift heights right after paint), and again shortly after in case they do.
@@ -2119,6 +2136,68 @@ function positionPinned(){
     } else {
       flowHeight += child.offsetHeight;
     }
+  });
+}
+
+// ---- Collapsible pinned bars ------------------------------------------------
+// Every .pin-top bar (Add cards, sort/filter toolbars) gets a slim clickable header
+// with a chevron; clicking it collapses the bar to that one line so the list below
+// gets the screen space back. Collapsed/expanded choice is remembered per bar
+// (keyed by tab + bar title) in localStorage. Bars start COLLAPSED by default the
+// first time they're seen — expand once and that bar stays expanded from then on.
+function pinCollapsePrefs(){
+  try{ return JSON.parse(localStorage.getItem('pinCollapsePrefs') || '{}'); }
+  catch(e){ return {}; }
+}
+function setPinCollapsePref(key, val){
+  const p = pinCollapsePrefs();
+  p[key] = val;
+  try{ localStorage.setItem('pinCollapsePrefs', JSON.stringify(p)); }catch(e){}
+}
+function initPinCollapse(holder){
+  const prefs = pinCollapsePrefs();
+  holder.querySelectorAll('.pin-top').forEach(bar => {
+    // Skip bars that already run their own collapse behavior (Carts Quick-add /
+    // Storage Area cards) and anything already processed this render.
+    if(bar.dataset.pinSelfCollapse || bar.dataset.pinCollapseInit) return;
+    bar.dataset.pinCollapseInit = '1';
+
+    const labelEl = bar.querySelector('.section-label');
+    const title = bar.dataset.pinTitle || (labelEl ? labelEl.textContent.trim()
+      : (bar.classList.contains('toolbar') ? 'Sort & filters' : 'Tools'));
+    const key = (state.admin.tab || '') + '|' + title;
+
+    // Move the bar's existing content into a body wrapper (childNodes, not children,
+    // so toolbars' bare text nodes like "Show: " come along too).
+    const body = document.createElement('div');
+    body.className = 'pin-body';
+    while(bar.firstChild) body.appendChild(bar.firstChild);
+
+    // Slim header row: title (reusing the bar's own section-label when it has one,
+    // so it isn't shown twice) + chevron. Deliberately not a <button> — view-only
+    // lockdown disables buttons, but collapsing is a harmless view preference.
+    const head = document.createElement('div');
+    head.className = 'pin-head';
+    if(labelEl){ head.appendChild(labelEl); }
+    else { head.appendChild(el('div','pin-head-title', title)); }
+    const chev = el('span','pin-chev','\u25BE');
+    head.appendChild(chev);
+
+    bar.classList.add('pin-wrap');
+    bar.appendChild(head);
+    bar.appendChild(body);
+
+    const applyCollapsed = (collapsed)=>{
+      bar.classList.toggle('pin-collapsed', collapsed);
+    };
+    let collapsed = (key in prefs) ? !!prefs[key] : true;
+    applyCollapsed(collapsed);
+    head.onclick = ()=>{
+      collapsed = !collapsed;
+      applyCollapsed(collapsed);
+      setPinCollapsePref(key, collapsed);
+      positionPinned();
+    };
   });
 }
 
@@ -3352,7 +3431,7 @@ function renderBusesTab(holder){
   }
 
   const quickAddCard = el('div', cartsOnly ? 'card pin-top' : 'card');
-  if(cartsOnly) quickAddCard.style.padding = '12px 14px';
+  if(cartsOnly){ quickAddCard.style.padding = '12px 14px'; quickAddCard.dataset.pinSelfCollapse = '1'; }
   const quickHead = el('div');
   quickHead.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px;';
   quickHead.innerHTML = '<div class="section-label" style="margin-bottom:0;">Quick-add numbered equipment</div>';
@@ -3515,7 +3594,7 @@ function renderBusesTab(holder){
   }
 
   const areaCard = el('div', cartsOnly ? 'card pin-top' : 'card');
-  if(cartsOnly) areaCard.style.padding = '12px 14px';
+  if(cartsOnly){ areaCard.style.padding = '12px 14px'; areaCard.dataset.pinSelfCollapse = '1'; }
   const areaHead = el('div');
   areaHead.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px;';
   areaHead.innerHTML = '<div class="section-label" style="margin-bottom:0;">Storage Area QR Codes</div>';
@@ -3644,6 +3723,7 @@ function renderBusesTab(holder){
   const visibleIds = visibleBuses.map(b=>b.id);
   const selectedVisibleCount = visibleIds.filter(id=>selectedBusIds.has(id)).length;
   const bulkBar = el('div','toolbar pin-top');
+  bulkBar.dataset.pinTitle = 'Select & print';
   bulkBar.style.padding = '5px 2px 6px';
   const selectAllLabel = document.createElement('label');
   selectAllLabel.style.cssText = 'display:flex; align-items:center; gap:7px; font-size:13px; font-weight:600; color:var(--ink-soft); cursor:pointer;';
