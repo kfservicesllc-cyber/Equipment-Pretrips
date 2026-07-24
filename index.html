@@ -166,6 +166,11 @@
   td{padding:9px 10px; border-bottom:1px solid var(--line); vertical-align:top;}
   tr:last-child td{border-bottom:none;}
   .tag{display:inline-block; padding:3px 9px; border-radius:999px; font-size:11px; font-weight:700; text-transform:uppercase;}
+  .tab-badge{display:inline-block; margin-left:6px; padding:1px 7px; border-radius:999px; background:var(--bad); color:#fff; font-size:10.5px; font-weight:700; vertical-align:1px;}
+  a.unit-link{color:var(--navy-2); text-decoration:none; border-bottom:1px dotted var(--navy-2); cursor:pointer;}
+  a.unit-link:hover{color:var(--gold); border-bottom-color:var(--gold);}
+  .stat.clickable{cursor:pointer;}
+  .stat.clickable:hover{outline:2px solid var(--gold);}
   .tag.open{background:#fbe3e0; color:var(--bad);}
   .tag.resolved{background:#e4f2ea; color:var(--ok);}
   .tag.minor{background:#fff3d6; color:var(--warn);}
@@ -467,16 +472,17 @@ async function sendFailureNotification(bus, driver, mileage, timestamp, failedCh
   const body = buildFailureEmailBody(bus, driver, mileage, timestamp, failedChecks);
   return await sendAppEmail(subject, body, recipientsForFailure(cat));
 }
-function buildResolvedEmailBody(bus, driver, timestamp, resolvedItems){
+function buildResolvedEmailBody(bus, driver, timestamp, resolvedItems, resolvedBy, resolutionNote){
   const cat = categoryFor(bus);
   let body = 'Issue resolved\n\n';
   body += 'Equipment: ' + bus.id + (bus.name ? ' (' + bus.name + ')' : '') + ' — ' + cat.label + '\n';
   body += 'Location: ' + locationForBus(bus) + '\n';
   body += 'Originally reported by: ' + driver + '\n';
   body += 'Originally reported: ' + fmtDT(timestamp) + '\n';
-  body += 'Resolved by: ' + (currentDepartmentName() || 'Admin') + '\n';
-  body += 'Resolved: ' + fmtDT(new Date().toISOString()) + '\n\n';
-  body += 'Resolved item(s):\n';
+  body += 'Resolved by: ' + (resolvedBy || currentDepartmentName() || 'Admin') + '\n';
+  body += 'Resolved: ' + fmtDT(new Date().toISOString()) + '\n';
+  if(resolutionNote) body += 'Work done: ' + resolutionNote + '\n';
+  body += '\nResolved item(s):\n';
   resolvedItems.forEach(c => {
     body += '- ' + c.label + (c.note ? ': ' + c.note : '') + '\n';
     if(c.photoUrl) body += '  Photo: ' + c.photoUrl + '\n';
@@ -486,15 +492,63 @@ function buildResolvedEmailBody(bus, driver, timestamp, resolvedItems){
 // Sent when a previously open issue is marked resolved. Goes to the same recipients a failure
 // email would have gone to — the equipment type's own notify address if set, else the global
 // default in Admin -> Settings.
-async function sendResolvedNotification(bus, driver, timestamp, resolvedItems){
+async function sendResolvedNotification(bus, driver, timestamp, resolvedItems, resolvedBy, resolutionNote){
   const cat = categoryFor(bus);
   const subject = 'Issue resolved — ' + bus.id + ' (' + cat.label + ' · ' + locationForBus(bus) + ') — ' + driver;
-  const body = buildResolvedEmailBody(bus, driver, timestamp, resolvedItems);
+  const body = buildResolvedEmailBody(bus, driver, timestamp, resolvedItems, resolvedBy, resolutionNote);
   return await sendAppEmail(subject, body, recipientsForFailure(cat));
 }
+/* ---------- PM helpers (meter- and calendar-based) ---------- */
+// A PM item is either meter-based (intervalType 'meter' / unset: due every N hrs/mi past
+// lastDoneReading) or calendar-based (intervalType 'days': due every N days past lastDoneDate).
+// pmStatusFor computes one uniform status object for both kinds so every consumer (PM tab,
+// PM Due tab, emails, badges, unit detail) shares identical due/soon math.
+function pmIsDayBased(p){ return p.intervalType === 'days'; }
+function pmStatusFor(bus, p, current){
+  const SOON_FRACTION = 0.10;
+  const interval = Number(p.intervalValue || 0);
+  if(pmIsDayBased(p)){
+    const lastDate = p.lastDoneDate ? new Date(p.lastDoneDate) : null;
+    if(!lastDate || isNaN(lastDate)){
+      return { dayBased:true, interval, hasBasis:false, isDue:false, soon:false, remaining:null, dueAt:null, dueAtLabel:'—', lastDoneLabel:'—', remainingUnit:'days' };
+    }
+    const dueDate = new Date(lastDate.getTime() + interval*86400000);
+    const remaining = Math.ceil((dueDate.getTime() - Date.now()) / 86400000); // days left; <=0 due
+    const isDue = remaining <= 0;
+    const soon = !isDue && interval > 0 && remaining <= Math.max(1, interval * SOON_FRACTION);
+    return { dayBased:true, interval, hasBasis:true, isDue, soon, remaining, dueAt: dueDate,
+      dueAtLabel: dueDate.toLocaleDateString(), lastDoneLabel: lastDate.toLocaleDateString(), remainingUnit:'days' };
+  }
+  const lastDone = p.lastDoneReading || 0;
+  const dueAt = lastDone + interval;
+  const hasBasis = current != null;
+  const remaining = hasBasis ? (dueAt - current) : null;
+  const isDue = hasBasis && current >= dueAt;
+  const soon = hasBasis && !isDue && interval > 0 && remaining <= interval * SOON_FRACTION;
+  const unit = unitLabel(categoryFor(bus).trackingUnit);
+  return { dayBased:false, interval, hasBasis, isDue, soon, remaining, dueAt,
+    dueAtLabel: dueAt.toLocaleString() + ' ' + unit, lastDoneLabel: lastDone.toLocaleString() + ' ' + unit, remainingUnit: unit };
+}
+// Appends a "done" entry to the unit's PM history — the audit trail behind every Mark done.
+// Capped so a unit's row in kv_store can't grow without bound.
+function pushPmHistory(bus, p, reading){
+  if(!bus.pmHistory) bus.pmHistory = [];
+  bus.pmHistory.push({
+    itemKey: p.key || null,
+    label: p.label || '',
+    at: new Date().toISOString(),
+    reading: reading != null ? reading : null,
+    by: currentDepartmentName() || 'Full Admin'
+  });
+  if(bus.pmHistory.length > 300) bus.pmHistory = bus.pmHistory.slice(-300);
+}
 function pmDueItemsFor(bus, mileage){
-  if(mileage == null || !bus.pmItems || !bus.pmItems.length) return [];
-  return bus.pmItems.filter(p => mileage >= (p.lastDoneReading||0) + Number(p.intervalValue||0));
+  if(!bus.pmItems || !bus.pmItems.length) return [];
+  return bus.pmItems.filter(p => {
+    if(pmIsDayBased(p)) return pmStatusFor(bus, p, null).isDue;
+    if(mileage == null) return false;
+    return mileage >= (p.lastDoneReading||0) + Number(p.intervalValue||0);
+  });
 }
 function buildPmEmailBody(bus, driver, mileage, timestamp, dueItems){
   const cat = categoryFor(bus);
@@ -503,13 +557,21 @@ function buildPmEmailBody(bus, driver, mileage, timestamp, dueItems){
   body += 'Equipment: ' + bus.id + (bus.name ? ' (' + bus.name + ')' : '') + ' — ' + cat.label + '\n';
   body += 'Location: ' + locationForBus(bus) + '\n';
   body += 'Driver: ' + driver + '\n';
-  body += (cat.trackingUnit==='hours' ? 'Hour meter: ' : 'Odometer: ') + mileage + ' ' + unit + '\n';
+  if(cat.trackingUnit !== 'none' && mileage != null){
+    body += (cat.trackingUnit==='hours' ? 'Hour meter: ' : 'Odometer: ') + mileage + ' ' + unit + '\n';
+  }
   body += 'Time: ' + fmtDT(timestamp) + '\n\n';
   body += 'Due items:\n';
   dueItems.forEach(p => {
-    const dueAt = (p.lastDoneReading||0) + Number(p.intervalValue||0);
-    const over = mileage - dueAt;
-    body += '- ' + p.label + ': due at ' + dueAt.toLocaleString() + ' ' + unit + (over>=0 ? ' (' + over.toLocaleString() + ' ' + unit + ' overdue)' : '') + '\n';
+    if(pmIsDayBased(p)){
+      const st = pmStatusFor(bus, p, mileage);
+      const overDays = st.remaining != null ? -st.remaining : 0;
+      body += '- ' + p.label + ': due on ' + st.dueAtLabel + (overDays>0 ? ' (' + overDays + ' day' + (overDays===1?'':'s') + ' overdue)' : '') + '\n';
+    } else {
+      const dueAt = (p.lastDoneReading||0) + Number(p.intervalValue||0);
+      const over = (mileage != null ? mileage : 0) - dueAt;
+      body += '- ' + p.label + ': due at ' + dueAt.toLocaleString() + ' ' + unit + (over>=0 && mileage!=null ? ' (' + over.toLocaleString() + ' ' + unit + ' overdue)' : '') + '\n';
+    }
   });
   return body;
 }
@@ -742,17 +804,50 @@ function locationForBus(bus){
 // Returns every flagged item on a shift record — failed checklist entries and reported issues alike —
 // in a common shape: {source:'check'|'issue', label, note, severity}
 function allFlaggedItems(s, cat){
+  // Each flagged item carries an addressable key ('check:<checkKey>' or 'issue:<index>') plus
+  // its own resolution state. `resolved` is the per-item stamp {at, by, note}; `isResolved`
+  // also honors the legacy record-level issuesResolved flag so older data reads correctly.
   const fromChecks = s.preTrip ? Object.entries(s.preTrip)
     .filter(([k,v]) => v.status==='fail')
     .map(([k,v]) => {
       const item = cat && cat.checklist ? cat.checklist.find(c=>c.key===k) : null;
-      return {source:'check', label: item ? item.label : k, note: v.note, severity: v.severity||'minor', photoUrl: v.photoUrl || null};
+      return {source:'check', key:'check:'+k, label: item ? item.label : k, note: v.note, severity: v.severity||'minor', photoUrl: v.photoUrl || null,
+        resolved: v.resolved || null, isResolved: !!v.resolved || !!s.issuesResolved};
     }) : [];
-  const fromIssues = (s.issues||[]).map(i => ({source:'issue', label: i.category, note: i.note, severity: i.severity||'minor', photoUrl: i.photoUrl || null}));
+  const fromIssues = (s.issues||[]).map((i, idx) => ({source:'issue', key:'issue:'+idx, label: i.category, note: i.note, severity: i.severity||'minor', photoUrl: i.photoUrl || null,
+    resolved: i.resolved || null, isResolved: !!i.resolved || !!s.issuesResolved}));
   return fromChecks.concat(fromIssues);
 }
 function recordHasUrgent(s, cat){
-  return allFlaggedItems(s, cat).some(i=>i.severity==='urgent');
+  // Urgent only counts while that specific item is still open — resolving the urgent item
+  // (even if other minor items on the same record remain open) puts the unit back in service.
+  return allFlaggedItems(s, cat).some(i=>i.severity==='urgent' && !i.isResolved);
+}
+// Finds the raw stored object behind a flagged-item key on a shift record, so resolution
+// stamps land on the actual persisted data (preTrip entry or issues[] entry).
+function rawFlaggedItem(rec, itemKey){
+  if(itemKey.startsWith('check:')) return rec.preTrip ? rec.preTrip[itemKey.slice(6)] : null;
+  if(itemKey.startsWith('issue:')) return (rec.issues||[])[Number(itemKey.slice(6))] || null;
+  return null;
+}
+// Stamps one item resolved/reopened on a record and keeps the legacy record-level
+// issuesResolved flag in sync (true only when every flagged item is resolved). Reopening an
+// item on a legacy record (issuesResolved=true, no per-item stamps) first carries the old
+// blanket resolution down onto each item so only the reopened one comes back open.
+function setItemResolution(rec, cat, itemKey, resolution){
+  const items = allFlaggedItems(rec, cat);
+  if(!resolution && rec.issuesResolved){
+    items.forEach(it => {
+      const raw = rawFlaggedItem(rec, it.key);
+      if(raw && !raw.resolved) raw.resolved = { at: null, by: '', note: '', legacy: true };
+    });
+  }
+  const target = rawFlaggedItem(rec, itemKey);
+  if(!target) return false;
+  if(resolution) target.resolved = resolution;
+  else delete target.resolved;
+  rec.issuesResolved = allFlaggedItems(rec, cat).every(it => !!it.resolved);
+  return true;
 }
 
 /* ---------- data access ---------- */
@@ -874,6 +969,61 @@ async function loadShifts(busId){
 async function saveShifts(busId, arr){
   state.shiftsCache[busId] = arr;
   return await setJSON('shifts:' + busId, arr);
+}
+
+/* ---------- offline shift queue ---------- */
+// If a driver submits in a dead spot (cart barn, back nine), the record is parked in
+// localStorage on the phone instead of being lost behind a "retry" button. The queue is
+// flushed on page load, whenever the browser comes back online, and every 60s as a backstop.
+// Failure/PM notification emails for a queued record are sent at flush time, once the save
+// actually lands.
+const PENDING_SHIFTS_KEY = 'scfleet_pendingShifts';
+function loadPendingShifts(){
+  try{ return JSON.parse(localStorage.getItem(PENDING_SHIFTS_KEY)) || []; }catch(e){ return []; }
+}
+function savePendingShifts(list){
+  try{ localStorage.setItem(PENDING_SHIFTS_KEY, JSON.stringify(list)); }catch(e){ console.error('pending queue save failed', e); }
+}
+function queuePendingShift(record, emailItems){
+  const list = loadPendingShifts();
+  list.push({ record, emailItems: emailItems || [] });
+  savePendingShifts(list);
+}
+let flushingPending = false;
+async function flushPendingShifts(){
+  if(flushingPending || !supa) return;
+  const list = loadPendingShifts();
+  if(!list.length) return;
+  flushingPending = true;
+  try{
+    const remaining = [];
+    for(const entry of list){
+      const rec = entry.record;
+      try{
+        // Read fresh from the server (bypass cache) so we merge against whatever actually
+        // landed there, then skip if this record already made it up in a previous attempt.
+        const serverArr = await getJSON('shifts:' + rec.busId, []);
+        if(!serverArr.some(x => x.id === rec.id)) serverArr.push(rec);
+        const ok = await saveShifts(rec.busId, serverArr);
+        if(!ok){ remaining.push(entry); continue; }
+        // Save landed — now send the notifications that were deferred while offline.
+        const bus = state.buses.find(b=>b.id===rec.busId) || { id: rec.busId, name: rec.busName };
+        if(entry.emailItems && entry.emailItems.length){
+          await sendFailureNotification(bus, rec.driver, rec.mileage, rec.timestamp, entry.emailItems);
+        }
+        const pmDue = pmDueItemsFor(bus, rec.mileage);
+        if(pmDue.length){
+          await sendPmNotification(bus, rec.driver, rec.mileage, rec.timestamp, pmDue);
+        }
+      }catch(e){
+        console.error('pending flush failed for', rec && rec.id, e);
+        remaining.push(entry);
+      }
+    }
+    savePendingShifts(remaining);
+  }finally{
+    flushingPending = false;
+  }
 }
 // Fetches shift history for many buses in as few round trips as possible (chunked to stay
 // well under any URL-length limits), instead of one request per bus. Populates shiftsCache
@@ -1217,6 +1367,9 @@ function renderShiftForm(wrap){
   fName.innerHTML = '<label>' + (action==='daily' ? 'Operator name' : 'Driver name') + '</label>';
   const nameInput = document.createElement('input');
   nameInput.type='text'; nameInput.placeholder='Full name'; nameInput.id='drv-name';
+  // Prefill the last name used on this device — drivers scan several units a day and
+  // shouldn't have to retype their own name every time.
+  try{ nameInput.value = localStorage.getItem('scfleet_driverName') || ''; }catch(e){}
   fName.appendChild(nameInput);
   form.appendChild(fName);
 
@@ -1506,7 +1659,21 @@ async function submitShift(bus, action, btn){
     if(!odoVal){ alert('Please enter the ' + (cat.trackingUnit==='hours' ? 'hour meter reading.' : 'odometer reading.')); return; }
     mileage = Number(odoVal);
     if(Number.isNaN(mileage) || mileage < 0){ alert('That reading looks invalid.'); return; }
+    // Sanity check against the last recorded reading — a fat-fingered extra digit poisons
+    // lastMileage and fires every PM alert at once. Soft confirm only, since meter swaps and
+    // corrections are legitimately possible.
+    const prev = lastMileage(bus.id);
+    if(prev != null){
+      const unitTxt = unitLabel(cat.trackingUnit);
+      if(mileage < prev){
+        if(!confirm('Heads up: you entered ' + mileage.toLocaleString() + ' ' + unitTxt + ', which is LOWER than the last recorded reading (' + prev.toLocaleString() + ' ' + unitTxt + ').\n\nSubmit anyway?')) return;
+      } else if(mileage > prev * 2 && mileage - prev > 1000){
+        if(!confirm('Heads up: you entered ' + mileage.toLocaleString() + ' ' + unitTxt + ' — that\'s a big jump from the last recorded reading (' + prev.toLocaleString() + ' ' + unitTxt + '). Double-check for an extra digit.\n\nSubmit anyway?')) return;
+      }
+    }
   }
+
+  try{ localStorage.setItem('scfleet_driverName', name); }catch(e){}
 
   if(Object.values(formPreTrip).some(v=>v.photoUploading) || formIssues.some(i=>i.photoUploading)){
     alert('A photo is still uploading — give it a moment and try submitting again.');
@@ -1535,6 +1702,15 @@ async function submitShift(bus, action, btn){
     issuesResolved: false
   };
 
+  // Every flagged item (any failed check, any reported issue) triggers the email — severity is still
+  // recorded and shown in Admin, it just no longer gates whether the notification goes out.
+  const allFlagged = failedChecks.concat(record.issues.map(i=>({label: i.category, note: i.note, severity: i.severity, isIssue:true, photoUrl: i.photoUrl})));
+  const emailItems = allFlagged.map(i=>({
+    label: (i.isIssue ? i.label + (i.severity==='urgent' ? ' — urgent / out of service' : '') : i.label) + (i.severity==='urgent' ? ' ⚠ URGENT' : ''),
+    note: i.note,
+    photoUrl: i.photoUrl || null
+  }));
+
   let ok = false;
   try{
     const arr = await loadShifts(bus.id);
@@ -1545,34 +1721,37 @@ async function submitShift(bus, action, btn){
     ok = false;
   }
 
+  let queuedOffline = false;
   if(!ok){
-    alert('Could not save.' + (lastStorageError ? '\n\nDetails: ' + lastStorageError : ' Check your connection and try again.'));
-    btn.disabled = false;
-    btn.textContent = 'Retry submit';
-    return;
+    // Save didn't land. If it looks like a connectivity problem (rather than a permissions /
+    // data error), park the record on this device and hand it to the auto-retry queue — the
+    // driver shouldn't have to stand in a dead spot mashing Retry.
+    const looksLikeNetwork = !navigator.onLine || /failed to fetch|networkerror|load failed|network request failed|timeout/i.test(lastStorageError || '');
+    if(looksLikeNetwork){
+      queuePendingShift(record, emailItems);
+      queuedOffline = true;
+    } else {
+      alert('Could not save.' + (lastStorageError ? '\n\nDetails: ' + lastStorageError : ' Check your connection and try again.'));
+      btn.disabled = false;
+      btn.textContent = 'Retry submit';
+      return;
+    }
   }
 
-  btn.textContent = 'Successfully submitted!';
-
-  // Every flagged item (any failed check, any reported issue) triggers the email — severity is still
-  // recorded and shown in Admin, it just no longer gates whether the notification goes out.
-  const allFlagged = failedChecks.concat(record.issues.map(i=>({label: i.category, note: i.note, severity: i.severity, isIssue:true, photoUrl: i.photoUrl})));
-  const emailItems = allFlagged.map(i=>({
-    label: (i.isIssue ? i.label + (i.severity==='urgent' ? ' — urgent / out of service' : '') : i.label) + (i.severity==='urgent' ? ' ⚠ URGENT' : ''),
-    note: i.note,
-    photoUrl: i.photoUrl || null
-  }));
+  btn.textContent = queuedOffline ? 'Saved on this device' : 'Successfully submitted!';
 
   let emailResult = null;
-  if(emailItems.length){
-    emailResult = await sendFailureNotification(bus, name, mileage, record.timestamp, emailItems);
-  }
-
-  // Preventive maintenance: fires every time a due item is crossed, on every log, until marked done in Admin.
-  const pmDue = pmDueItemsFor(bus, mileage);
+  let pmDue = [];
   let pmEmailResult = null;
-  if(pmDue.length){
-    pmEmailResult = await sendPmNotification(bus, name, mileage, record.timestamp, pmDue);
+  if(!queuedOffline){
+    if(emailItems.length){
+      emailResult = await sendFailureNotification(bus, name, mileage, record.timestamp, emailItems);
+    }
+    // Preventive maintenance: fires every time a due item is crossed, on every log, until marked done in Admin.
+    pmDue = pmDueItemsFor(bus, mileage);
+    if(pmDue.length){
+      pmEmailResult = await sendPmNotification(bus, name, mileage, record.timestamp, pmDue);
+    }
   }
 
   state.driver.lastRecord = record;
@@ -1581,6 +1760,7 @@ async function submitShift(bus, action, btn){
   state.driver.emailResult = emailResult;
   state.driver.pmDue = pmDue;
   state.driver.pmEmailResult = pmEmailResult;
+  state.driver.queuedOffline = queuedOffline;
   setTimeout(()=>{
     state.driver.screen = 'confirm';
     formIssues = []; formPreTrip = makeEmptyPreTrip();
@@ -1616,6 +1796,14 @@ function renderConfirm(wrap){
   const recReading = rec.mileage!=null ? (rec.mileage.toLocaleString() + ' ' + recUnit + ' · ') : '';
   card.appendChild(el('div','confirm-id', bus_(rec.busId) + ' · ' + recReading + fmtDT(rec.timestamp)));
 
+  if(state.driver.queuedOffline){
+    const offBanner = el('div','fail-banner');
+    offBanner.style.textAlign='left';
+    offBanner.style.background = '#fff3d6'; offBanner.style.borderColor = 'var(--warn)'; offBanner.style.color = 'var(--warn)';
+    offBanner.innerHTML = '📶 No connection right now — this log is saved on this device and will upload automatically (with any notifications) as soon as signal comes back. Keep this browser; no need to resubmit.';
+    card.appendChild(offBanner);
+  }
+
   if(flagged.length){
     const banner = el('div','fail-banner');
     banner.style.textAlign='left';
@@ -1628,7 +1816,11 @@ function renderConfirm(wrap){
     resendBtn.className='btn btn-outline';
 
     const result = state.driver.emailResult;
-    if(result && result.ok){
+    if(state.driver.queuedOffline){
+      statusLine.style.color = 'var(--warn)';
+      statusLine.textContent = 'Notification will be emailed automatically when this log uploads.';
+      resendBtn.style.display = 'none';
+    } else if(result && result.ok){
       statusLine.style.color = 'var(--ok)';
       statusLine.textContent = '✓ Notification emailed automatically to ' + escapeHtml(recipientsForFailure(recCat).join(', ')) + '.';
       resendBtn.textContent = 'Resend notification';
@@ -1726,6 +1918,43 @@ function renderConfirm(wrap){
 function bus_(id){ const b = state.buses.find(x=>x.id===id); return b ? b.id + (b.name? ' · '+b.name : '') : id; }
 
 /* ================= ADMIN MODE ================= */
+// Counts shown as badges on the admin tab strip — open issue items and PM items currently
+// due, scoped to whatever the signed-in session can see. Reads only warm caches (boot batch-
+// loads every unit's shifts), so it's safe to call synchronously while building the tabs.
+function adminTabCounts(){
+  const myBuses = busesForCurrentUser();
+  let openIssues = 0;
+  let pmDue = 0;
+  myBuses.forEach(b => {
+    const cat = categoryFor(b);
+    (state.shiftsCache[b.id] || []).forEach(s => {
+      allFlaggedItems(s, cat).forEach(it => { if(!it.isResolved) openIssues++; });
+    });
+    const current = lastMileage(b.id);
+    (b.pmItems || []).forEach(p => { if(pmStatusFor(b, p, current).isDue) pmDue++; });
+  });
+  return { openIssues, pmDue };
+}
+
+// Opens the single-unit detail screen from anywhere in Admin, remembering which tab to
+// return to. The detail screen is a pseudo-tab ('unitdetail') that no tab button maps to.
+function openUnitDetail(busId){
+  state.admin.detailReturnTab = (state.admin.tab === 'unitdetail') ? (state.admin.detailReturnTab || 'overview') : state.admin.tab;
+  state.admin.detailBusId = busId;
+  state.admin.tab = 'unitdetail';
+  render();
+}
+// Wires every .unit-link built via innerHTML in a container to open that unit's detail
+// screen. Uses anchors (not buttons) so view-only sessions can still navigate.
+function bindUnitLinks(container){
+  container.querySelectorAll('a.unit-link').forEach(a => {
+    a.onclick = (e)=>{ e.preventDefault(); openUnitDetail(a.dataset.bus); };
+  });
+}
+function unitLinkHtml(busId){
+  return `<a href="#" class="unit-link" data-bus="${escapeHtml(busId)}"><strong>${escapeHtml(busId)}</strong></a>`;
+}
+
 function renderAdmin(){
   const wrap = el('div','wrap');
   app.appendChild(wrap);
@@ -1771,9 +2000,15 @@ function renderAdmin(){
   }
   allTabs.push(['account','My Account']);
   const tabs = el('div','tabs2');
+  const counts = adminTabCounts();
   allTabs.forEach(([key,label])=>{
     const b = document.createElement('button');
     b.textContent = label;
+    const badgeCount = key==='issues' ? counts.openIssues : key==='pmdue' ? counts.pmDue : 0;
+    if(badgeCount){
+      const badge = el('span','tab-badge', String(badgeCount));
+      b.appendChild(badge);
+    }
     if(state.admin.tab===key) b.className='active';
     b.onclick = ()=>{ state.admin.tab=key; render(); };
     tabs.appendChild(b);
@@ -1820,6 +2055,7 @@ async function renderAdminTab(holder){
   else if(state.admin.tab==='pmdue') renderPmDueTab(holder);
   else if(state.admin.tab==='issues') renderIssuesTab(holder, all);
   else if(state.admin.tab==='log') renderLogTab(holder, all);
+  else if(state.admin.tab==='unitdetail') renderUnitDetailTab(holder, all);
   else if(state.admin.tab==='departments' && isFullAdmin() && !isViewOnly()) renderDepartmentsTab(holder);
   else if(state.admin.tab==='settings' && isFullAdmin() && !isViewOnly()) renderSettingsTab(holder);
   else if(state.admin.tab==='account') renderAccountTab(holder);
@@ -2449,19 +2685,40 @@ function renderOverview(holder, allShifts){
 
   const openIssues = [];
   all.forEach(s=>{
-    if(s.issuesResolved) return;
     const cat = categoryFor(myBuses.find(b=>b.id===s.busId) || {id:s.busId});
-    allFlaggedItems(s, cat).forEach(item => openIssues.push({rec:s, item}));
+    allFlaggedItems(s, cat).forEach(item => { if(!item.isResolved) openIssues.push({rec:s, item}); });
   });
   const urgentCount = openIssues.filter(o=>o.item.severity==='urgent').length;
 
+  // Stale units: nothing logged in the last 7 days (or ever) — catches equipment that's
+  // quietly fallen out of its inspection/wash cycle.
+  const STALE_DAYS = 7;
+  const staleCutoff = Date.now() - STALE_DAYS*86400000;
+  const isStaleBus = (b)=>{
+    const arr = state.shiftsCache[b.id] || [];
+    if(!arr.length) return true;
+    return !arr.some(s => new Date(s.timestamp).getTime() >= staleCutoff);
+  };
+  const staleCount = myBuses.filter(isStaleBus).length;
+
+  const goTab = (tab, setup)=>{ if(setup) setup(); state.admin.tab = tab; render(); };
   const stats = el('div','stat-grid');
-  stats.appendChild(statCard(myBuses.length,'Equipment tracked'));
-  stats.appendChild(statCard(all.length,'Logs total'));
+  const eq = statCard(myBuses.length,'Equipment tracked');
+  eq.classList.add('clickable'); eq.onclick = ()=> goTab('buses');
+  stats.appendChild(eq);
+  const lg = statCard(all.length,'Logs total');
+  lg.classList.add('clickable'); lg.onclick = ()=> goTab('log');
+  stats.appendChild(lg);
   const oi = statCard(openIssues.length,'Open issues'); if(urgentCount) oi.classList.add('alert');
+  oi.classList.add('clickable'); oi.onclick = ()=> goTab('issues', ()=>{ state.admin.issueFilter='open'; });
   stats.appendChild(oi);
   const ui = statCard(urgentCount,'Urgent · out of service'); if(urgentCount) ui.classList.add('alert');
+  ui.classList.add('clickable'); ui.onclick = ()=> goTab('issues', ()=>{ state.admin.issueFilter='open'; state.admin.issueSort='severity'; });
   stats.appendChild(ui);
+  const st = statCard(staleCount,'Not logged ' + STALE_DAYS + '+ days'); if(staleCount) st.classList.add('alert');
+  st.classList.add('clickable');
+  st.onclick = ()=>{ state.admin.overviewShow = 'stale'; renderAdminTab(holder); };
+  stats.appendChild(st);
   holder.appendChild(stats);
 
   if(myBuses.length){
@@ -2472,12 +2729,15 @@ function renderOverview(holder, allShifts){
       const sorted = [...arr].sort((a,x)=> new Date(x.timestamp)-new Date(a.timestamp));
       const last = sorted[0] || null;
       const cat = categoryFor(b);
-      const hasUrgent = arr.some(s => !s.issuesResolved && recordHasUrgent(s, cat));
+      const hasUrgent = arr.some(s => recordHasUrgent(s, cat)); // per-item aware: resolving the urgent item returns the unit to service
       return {b, cat, last, hasUrgent};
     });
 
     const locationVal = state.admin.overviewLocationFilter || 'all';
     if(locationVal!=='all') enriched = enriched.filter(x => locationForBus(x.b)===locationVal);
+
+    const showVal = state.admin.overviewShow || 'all';
+    if(showVal==='stale') enriched = enriched.filter(x => isStaleBus(x.b));
 
     const sortVal = state.admin.overviewSort || 'location';
     enriched.sort((x,y)=>{
@@ -2493,6 +2753,13 @@ function renderOverview(holder, allShifts){
     });
 
     const toolbar = el('div','toolbar pin-top');
+    const showSel = document.createElement('select');
+    showSel.innerHTML = '<option value="all">All units</option><option value="stale">Not logged ' + STALE_DAYS + '+ days</option>';
+    showSel.value = showVal;
+    showSel.onchange = ()=>{ state.admin.overviewShow = showSel.value; renderAdminTab(holder); };
+    toolbar.appendChild(document.createTextNode('Show: '));
+    toolbar.appendChild(showSel);
+
     const locSel = document.createElement('select');
     locSel.innerHTML = '<option value="all">All locations</option>' + LOCATIONS.map(l=>`<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('');
     locSel.value = locationVal;
@@ -2508,6 +2775,19 @@ function renderOverview(holder, allShifts){
     sortSel.onchange = ()=>{ state.admin.overviewSort = sortSel.value; renderAdminTab(holder); };
     toolbar.appendChild(document.createTextNode('Sort by: '));
     toolbar.appendChild(sortSel);
+
+    // One-click status digest email — open issues + PM due across everything this session
+    // can see, to the same recipients the automatic alerts use.
+    const digestBtn = document.createElement('button');
+    digestBtn.className='btn btn-outline btn-sm'; digestBtn.textContent='Email digest';
+    digestBtn.onclick = async ()=>{
+      digestBtn.disabled = true; digestBtn.textContent = 'Sending...';
+      const r = await sendFleetDigest();
+      digestBtn.disabled = false; digestBtn.textContent = 'Email digest';
+      if(r.ok) alert('Digest sent to: ' + r.recipients.join(', '));
+      else alert('Digest not sent — ' + r.error);
+    };
+    toolbar.appendChild(digestBtn);
     holder.appendChild(toolbar);
   }
 
@@ -2523,18 +2803,58 @@ function renderOverview(holder, allShifts){
     const tbody = document.createElement('tbody');
     enriched.forEach(({b, cat, last, hasUrgent})=>{
       const tr = document.createElement('tr');
-      tr.innerHTML = `<td><strong>${escapeHtml(b.id)}</strong></td><td>${escapeHtml(b.name||'—')}</td><td>${escapeHtml(cat.label)}</td><td>${escapeHtml(locationForBus(b))}</td>` +
+      const stale = isStaleBus(b);
+      const lastCell = last ? escapeHtml(last.driver)+' · '+fmtDT(last.timestamp) : 'Never';
+      tr.innerHTML = `<td>${unitLinkHtml(b.id)}</td><td>${escapeHtml(b.name||'—')}</td><td>${escapeHtml(cat.label)}</td><td>${escapeHtml(locationForBus(b))}</td>` +
         `<td class="mono">${last && last.mileage!=null ? last.mileage.toLocaleString()+' '+unitLabel(cat.trackingUnit) : '—'}</td>` +
-        `<td>${last? escapeHtml(last.driver)+' · '+fmtDT(last.timestamp) : '—'}</td>` +
+        `<td>${stale ? '<span style="color:var(--warn); font-weight:600;">' + lastCell + '</span>' : lastCell}</td>` +
         `<td>${hasUrgent? '<span class="tag open">Out of service</span>' : '<span class="tag resolved">In service</span>'}</td>`;
       tbody.appendChild(tr);
     });
     table.appendChild(tbody);
+    bindUnitLinks(table);
     const scrollWrap = el('div','table-scroll');
     scrollWrap.appendChild(table);
     card.appendChild(scrollWrap);
   }
   holder.appendChild(card);
+}
+
+// Composes and sends the on-demand fleet digest: every open issue item and every PM item
+// currently due, scoped to the signed-in session. Recipients = union of the global failure
+// and PM notify addresses from Admin → Settings.
+async function sendFleetDigest(){
+  const raw = (state.settings.notifyEmail || '') + ',' + (state.settings.pmNotifyEmail || '');
+  const recipients = [...new Set(raw.split(',').map(e=>e.trim()).filter(Boolean))];
+  if(!recipients.length) return { ok:false, error:'set a notify email in Admin → Settings first.' };
+
+  const myBuses = busesForCurrentUser();
+  const issueLines = [];
+  const pmLines = [];
+  myBuses.forEach(b => {
+    const cat = categoryFor(b);
+    (state.shiftsCache[b.id] || []).forEach(s => {
+      allFlaggedItems(s, cat).forEach(it => {
+        if(it.isResolved) return;
+        const days = Math.floor((Date.now() - new Date(s.timestamp).getTime())/86400000);
+        issueLines.push('- ' + b.id + (b.name?' ('+b.name+')':'') + ' — ' + it.label + (it.severity==='urgent'?' ⚠ URGENT':'') +
+          (it.note?': '+it.note:'') + ' — reported by ' + s.driver + ', ' + (days<1?'today':days+' day'+(days===1?'':'s')+' ago'));
+      });
+    });
+    const current = lastMileage(b.id);
+    (b.pmItems || []).forEach(p => {
+      const stPm = pmStatusFor(b, p, current);
+      if(stPm.isDue) pmLines.push('- ' + b.id + (b.name?' ('+b.name+')':'') + ' — ' + (p.label||'PM item') + ' (due ' + (stPm.dayBased?'on ':'at ') + stPm.dueAtLabel + ')');
+    });
+  });
+
+  const scopeName = currentDepartmentName() || 'All departments';
+  let body = 'Fleet status digest — ' + scopeName + '\nGenerated: ' + fmtDT(new Date().toISOString()) + '\n\n';
+  body += 'OPEN ISSUES (' + issueLines.length + ')\n' + (issueLines.length ? issueLines.join('\n') : 'None — all clear.') + '\n\n';
+  body += 'PM DUE (' + pmLines.length + ')\n' + (pmLines.length ? pmLines.join('\n') : 'Nothing due.') + '\n\n';
+  body += 'Sent from the Fleet Shift Log admin dashboard.';
+  const r = await sendAppEmail('Fleet digest — ' + scopeName + ' — ' + new Date().toLocaleDateString(), body, recipients);
+  return r.ok ? { ok:true, recipients } : { ok:false, error: r.error || 'send failed.' };
 }
 function statCard(num,label){
   const s = el('div','stat');
@@ -4099,7 +4419,7 @@ function renderPmImportPreview(container, holder){
 function renderPmTab(holder){
   const intro = el('div','note');
   intro.style.margin = '2px 2px 14px';
-  intro.textContent = 'Set a schedule per piece of equipment — e.g. "Oil change every 250 hours." Once the current reading crosses that line, a maintenance email goes out, and keeps going out on every new log until you mark it done here. Not available for equipment that doesn\'t track miles or hours.';
+  intro.textContent = 'Set a schedule per piece of equipment — meter-based ("Oil change every 250 hours") or calendar-based ("Annual inspection every 365 days"). Once the current reading or date crosses that line, a maintenance email goes out, and keeps going out on every new log until you mark it done here. Equipment without a meter can still carry calendar-based items.';
   holder.appendChild(intro);
 
   const filterVal = state.admin.pmTypeFilter || 'all';
@@ -4108,15 +4428,17 @@ function renderPmTab(holder){
   let visibleBuses = busesForCurrentUser().filter(b => {
     const typeOk = filterVal==='all' || (b.category||'shuttle')===filterVal;
     const locOk = locationVal==='all' || locationForBus(b)===locationVal;
-    return typeOk && locOk && categoryFor(b).trackingUnit !== 'none';
+    return typeOk && locOk;
   });
+  const busHasDue = (b)=>{
+    const cur = categoryFor(b).trackingUnit==='none' ? null : lastMileage(b.id);
+    return (b.pmItems||[]).some(p => pmStatusFor(b, p, cur).isDue);
+  };
   visibleBuses = visibleBuses.slice().sort((a,b)=>{
     if(pmSortVal==='type') return categoryFor(a).label.localeCompare(categoryFor(b).label) || a.id.localeCompare(b.id, undefined, {numeric:true});
     if(pmSortVal==='location') return locationForBus(a).localeCompare(locationForBus(b)) || a.id.localeCompare(b.id, undefined, {numeric:true});
     if(pmSortVal==='due'){
-      const dueA = (a.pmItems||[]).some(p => lastMileage(a.id) != null && lastMileage(a.id) >= (p.lastDoneReading||0) + Number(p.intervalValue||0));
-      const dueB = (b.pmItems||[]).some(p => lastMileage(b.id) != null && lastMileage(b.id) >= (p.lastDoneReading||0) + Number(p.intervalValue||0));
-      return ((dueB?1:0) - (dueA?1:0)) || a.id.localeCompare(b.id, undefined, {numeric:true});
+      return ((busHasDue(b)?1:0) - (busHasDue(a)?1:0)) || a.id.localeCompare(b.id, undefined, {numeric:true});
     }
     return a.id.localeCompare(b.id, undefined, {numeric:true});
   });
@@ -4223,19 +4545,20 @@ function renderPmTab(holder){
   }
 
   if(!visibleBuses.length){
-    holder.appendChild(el('div','empty','No trackable equipment matches this filter.'));
+    holder.appendChild(el('div','empty','No equipment matches this filter.'));
     return;
   }
 
   visibleBuses.forEach(b=>{
     const cat = categoryFor(b);
+    const hasMeter = cat.trackingUnit !== 'none';
     const unit = unitLabel(cat.trackingUnit);
-    const current = lastMileage(b.id);
+    const current = hasMeter ? lastMileage(b.id) : null;
     const card = el('div','card');
     const head = el('div','flex-between');
     head.innerHTML = `<div><span style="font-family:'Barlow Condensed'; font-size:20px; font-weight:700; color:var(--navy);">${escapeHtml(b.id)}</span>
       <span style="color:var(--ink-soft); font-size:13px;"> ${escapeHtml(b.name||'')} · ${escapeHtml(cat.label)}</span></div>
-      <div class="mono" style="font-size:13px; color:var(--ink-soft);">${current!=null ? 'Current: ' + current.toLocaleString() + ' ' + unit : 'No readings yet'}</div>`;
+      <div class="mono" style="font-size:13px; color:var(--ink-soft);">${!hasMeter ? 'No meter — calendar-based PM only' : current!=null ? 'Current: ' + current.toLocaleString() + ' ' + unit : 'No readings yet'}</div>`;
     card.appendChild(head);
 
     const items = b.pmItems || [];
@@ -4243,8 +4566,9 @@ function renderPmTab(holder){
       card.appendChild(el('div','note','No PM items set up for this unit yet.'));
     }
     items.forEach((p, idx) => {
-      const dueAt = (p.lastDoneReading||0) + Number(p.intervalValue||0);
-      const isDue = current != null && current >= dueAt;
+      const dayBased = pmIsDayBased(p);
+      const st = pmStatusFor(b, p, current);
+      const isDue = st.isDue;
       const row = el('div');
       row.style.cssText = 'border:1.5px solid ' + (isDue?'var(--bad)':'var(--line)') + '; border-radius:8px; padding:12px; margin-top:10px;' + (isDue?' background:#fbe3e0;':'');
 
@@ -4258,13 +4582,34 @@ function renderPmTab(holder){
       labelField.appendChild(labelInput);
       rowTop.appendChild(labelField);
 
-      const intField = el('div','field'); intField.style.cssText='margin-bottom:0; min-width:110px;';
-      intField.innerHTML = '<label>Every (' + unit + ')</label>';
+      const intField = el('div','field'); intField.style.cssText='margin-bottom:0; min-width:100px;';
+      intField.innerHTML = '<label>Every</label>';
       const intInput = document.createElement('input');
       intInput.type='number'; intInput.value = p.intervalValue;
       intInput.oninput = ()=> p.intervalValue = Number(intInput.value);
       intField.appendChild(intInput);
       rowTop.appendChild(intField);
+
+      // Meter vs calendar basis. Units without a meter are locked to calendar-based.
+      const basisField = el('div','field'); basisField.style.cssText='margin-bottom:0; min-width:100px;';
+      basisField.innerHTML = '<label>Basis</label>';
+      const basisSel = document.createElement('select');
+      basisSel.innerHTML = (hasMeter ? '<option value="meter">' + escapeHtml(unit) + '</option>' : '') + '<option value="days">days</option>';
+      basisSel.value = dayBased || !hasMeter ? 'days' : 'meter';
+      basisSel.onchange = async ()=>{
+        if(basisSel.value === 'days'){
+          p.intervalType = 'days';
+          if(!p.lastDoneDate) p.lastDoneDate = new Date().toISOString().slice(0,10);
+        } else {
+          delete p.intervalType;
+          if(p.lastDoneReading == null) p.lastDoneReading = current || 0;
+        }
+        const ok = await saveBuses();
+        if(!ok){ alert('Could not save.' + (lastStorageError?'\n\nDetails: '+lastStorageError:'')); return; }
+        renderAdminTab(holder);
+      };
+      basisField.appendChild(basisSel);
+      rowTop.appendChild(basisField);
 
       const rmBtn = document.createElement('button');
       rmBtn.className='btn btn-outline btn-sm'; rmBtn.textContent='Remove';
@@ -4279,24 +4624,41 @@ function renderPmTab(holder){
 
       const statusLine = el('div','note');
       statusLine.style.marginBottom = '8px';
-      statusLine.innerHTML = 'Last done at <strong>' + (p.lastDoneReading||0).toLocaleString() + ' ' + unit + '</strong> · due at <strong>' + dueAt.toLocaleString() + ' ' + unit + '</strong>' +
-        (isDue ? ' · <span style="color:var(--bad); font-weight:700;">DUE' + (current!=null ? ' (' + (current-dueAt).toLocaleString() + ' ' + unit + ' over)' : '') + '</span>' : ' · <span style="color:var(--ok);">OK</span>');
+      const remUnit = st.dayBased ? 'days' : unit;
+      statusLine.innerHTML = 'Last done ' + (st.dayBased?'on':'at') + ' <strong>' + st.lastDoneLabel + '</strong> · due ' + (st.dayBased?'on':'at') + ' <strong>' + st.dueAtLabel + '</strong>' +
+        (isDue ? ' · <span style="color:var(--bad); font-weight:700;">DUE' + (st.remaining!=null ? ' (' + (-st.remaining).toLocaleString() + ' ' + remUnit + ' over)' : '') + '</span>'
+          : !st.hasBasis ? ' · <span style="color:var(--ink-soft);">' + (st.dayBased?'no date set':'no readings yet') + '</span>'
+          : ' · <span style="color:var(--ok);">OK</span>');
       row.appendChild(statusLine);
 
       const doneRow = el('div');
       doneRow.style.cssText = 'display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap;';
       const doneField = el('div','field'); doneField.style.cssText='margin-bottom:0; min-width:130px;';
-      doneField.innerHTML = '<label>Mark done at</label>';
-      const doneInput = document.createElement('input');
-      doneInput.type='number'; doneInput.placeholder = current!=null ? String(current) : 'reading';
+      let doneInput;
+      if(st.dayBased){
+        doneField.innerHTML = '<label>Mark done on</label>';
+        doneInput = document.createElement('input');
+        doneInput.type='date'; doneInput.value = new Date().toISOString().slice(0,10);
+      } else {
+        doneField.innerHTML = '<label>Mark done at</label>';
+        doneInput = document.createElement('input');
+        doneInput.type='number'; doneInput.placeholder = current!=null ? String(current) : 'reading';
+      }
       doneField.appendChild(doneInput);
       doneRow.appendChild(doneField);
       const doneBtn = document.createElement('button');
       doneBtn.className='btn btn-primary btn-sm'; doneBtn.textContent='Mark done';
       doneBtn.onclick = async ()=>{
-        const val = doneInput.value ? Number(doneInput.value) : current;
-        if(val == null){ alert('Enter the reading it was done at, or log a shift for this unit first.'); return; }
-        p.lastDoneReading = val;
+        if(st.dayBased){
+          const d = doneInput.value || new Date().toISOString().slice(0,10);
+          p.lastDoneDate = d;
+          pushPmHistory(b, p, null);
+        } else {
+          const val = doneInput.value ? Number(doneInput.value) : current;
+          if(val == null){ alert('Enter the reading it was done at, or log a shift for this unit first.'); return; }
+          p.lastDoneReading = val;
+          pushPmHistory(b, p, val);
+        }
         doneBtn.disabled = true; doneBtn.textContent = 'Saving...';
         const ok = await saveBuses();
         if(!ok){ alert('Could not save.' + (lastStorageError?'\n\nDetails: '+lastStorageError:'')); doneBtn.disabled=false; doneBtn.textContent='Mark done'; return; }
@@ -4323,7 +4685,11 @@ function renderPmTab(holder){
     addBtn.className='btn-add-issue'; addBtn.style.marginTop='10px'; addBtn.textContent='+ Add PM item';
     addBtn.onclick = async ()=>{
       if(!b.pmItems) b.pmItems = [];
-      b.pmItems.push({ key: uid('pm'), label: 'New PM item', intervalValue: 100, lastDoneReading: current||0 });
+      if(hasMeter){
+        b.pmItems.push({ key: uid('pm'), label: 'New PM item', intervalValue: 100, lastDoneReading: current||0 });
+      } else {
+        b.pmItems.push({ key: uid('pm'), label: 'New PM item', intervalType: 'days', intervalValue: 365, lastDoneDate: new Date().toISOString().slice(0,10) });
+      }
       const ok = await saveBuses();
       if(!ok){ alert('Could not save.' + (lastStorageError?'\n\nDetails: '+lastStorageError:'')); return; }
       renderAdminTab(holder);
@@ -4343,29 +4709,21 @@ function renderPmDueTab(holder){
   // "Upcoming" threshold: an item not yet due counts as coming due soon once the reading is
   // within this fraction of its interval of the due point (self-scaling — 25 hrs on a 250-hr
   // interval, 50 mi on a 500-mi interval).
-  const SOON_FRACTION = 0.10;
-
   const rows = [];
   busesForCurrentUser().forEach(b => {
     const cat = categoryFor(b);
-    if(cat.trackingUnit === 'none') return; // PM only applies to equipment that tracks hrs/miles
     const unit = unitLabel(cat.trackingUnit);
-    const current = lastMileage(b.id);
-    const hasReading = current != null;
+    const current = cat.trackingUnit === 'none' ? null : lastMileage(b.id);
     (b.pmItems || []).forEach(p => {
-      const interval = Number(p.intervalValue || 0);
-      const lastDone = p.lastDoneReading || 0;
-      const dueAt = lastDone + interval;
-      const remaining = hasReading ? (dueAt - current) : null; // <=0 means overdue
-      const isDue = hasReading && current >= dueAt;
-      const soon = hasReading && !isDue && interval > 0 && remaining <= interval * SOON_FRACTION;
-      rows.push({ bus:b, cat, item:p, unit, current, dueAt, lastDone, interval, hasReading, isDue, soon, remaining });
+      const st = pmStatusFor(b, p, current);
+      rows.push({ bus:b, cat, item:p, unit, current, st,
+        isDue: st.isDue, soon: st.soon, hasBasis: st.hasBasis, remaining: st.remaining, interval: st.interval });
     });
   });
 
   const intro = el('div','note');
   intro.style.margin = '2px 2px 14px';
-  intro.textContent = 'Everything on a PM schedule across your equipment, in one list — sorted so what\'s due floats to the top. "Soon" means the unit is within 10% of its interval of coming due. Mark an item done here and it resets to the unit\'s current reading, just like on the Preventive Maintenance tab.';
+  intro.textContent = 'Everything on a PM schedule across your equipment, in one list — sorted so what\'s due floats to the top. "Soon" means the unit is within 10% of its interval of coming due. Mark an item done here and it resets to the unit\'s current reading (or to today, for calendar-based items), just like on the Preventive Maintenance tab.';
   holder.appendChild(intro);
 
   const showVal = state.admin.pmDueFilter || 'due';
@@ -4382,7 +4740,7 @@ function renderPmDueTab(holder){
   toolbar.appendChild(showSel);
 
   const typeSel = document.createElement('select');
-  typeSel.innerHTML = '<option value="all">All types</option>' + categoriesForCurrentUser().filter(c=>c.trackingUnit!=='none').map(c=>`<option value="${escapeHtml(c.key)}">${escapeHtml(c.label)}</option>`).join('');
+  typeSel.innerHTML = '<option value="all">All types</option>' + categoriesForCurrentUser().map(c=>`<option value="${escapeHtml(c.key)}">${escapeHtml(c.label)}</option>`).join('');
   typeSel.value = typeVal;
   typeSel.onchange = ()=>{ state.admin.pmDueTypeFilter = typeSel.value; renderAdminTab(holder); };
   toolbar.appendChild(document.createTextNode('Type: '));
@@ -4405,7 +4763,6 @@ function renderPmDueTab(holder){
   sortSel.onchange = ()=>{ state.admin.pmDueSort = sortSel.value; renderAdminTab(holder); };
   toolbar.appendChild(document.createTextNode('Sort by: '));
   toolbar.appendChild(sortSel);
-  holder.appendChild(toolbar);
 
   const filtered = rows.filter(r => {
     if(typeVal !== 'all' && (r.bus.category||'shuttle') !== typeVal) return false;
@@ -4415,16 +4772,24 @@ function renderPmDueTab(holder){
     return true; // all
   });
 
-  // Rank for status sort + tie-breaks: due (0) -> soon (1) -> ok (2) -> no reading (3).
-  const rank = r => r.isDue ? 0 : r.soon ? 1 : r.hasReading ? 2 : 3;
-  const remOrInf = r => r.remaining == null ? Infinity : r.remaining; // most overdue = smallest (most negative)
+  const exportBtn = document.createElement('button');
+  exportBtn.className='btn btn-outline btn-sm'; exportBtn.textContent='Export CSV';
+  exportBtn.onclick = ()=> exportPmDueCsv(filtered);
+  toolbar.appendChild(exportBtn);
+  holder.appendChild(toolbar);
+
+  // Rank for status sort + tie-breaks: due (0) -> soon (1) -> ok (2) -> no basis (3).
+  // "Most overdue" compares remaining as a FRACTION of the interval so meter-based (hrs/mi)
+  // and calendar-based (days) items sort sensibly against each other.
+  const rank = r => r.isDue ? 0 : r.soon ? 1 : r.hasBasis ? 2 : 3;
+  const remFrac = r => (r.remaining == null || !r.interval) ? Infinity : r.remaining / r.interval;
   filtered.sort((a,b)=>{
     if(sortVal==='equipment') return a.bus.id.localeCompare(b.bus.id, undefined, {numeric:true});
     if(sortVal==='location') return locationForBus(a.bus).localeCompare(locationForBus(b.bus)) || a.bus.id.localeCompare(b.bus.id, undefined, {numeric:true});
     if(sortVal==='type') return a.cat.label.localeCompare(b.cat.label) || a.bus.id.localeCompare(b.bus.id, undefined, {numeric:true});
-    if(sortVal==='overdue') return remOrInf(a) - remOrInf(b) || a.bus.id.localeCompare(b.bus.id, undefined, {numeric:true});
+    if(sortVal==='overdue') return remFrac(a) - remFrac(b) || a.bus.id.localeCompare(b.bus.id, undefined, {numeric:true});
     // status (default)
-    return rank(a) - rank(b) || remOrInf(a) - remOrInf(b) || a.bus.id.localeCompare(b.bus.id, undefined, {numeric:true});
+    return rank(a) - rank(b) || remFrac(a) - remFrac(b) || a.bus.id.localeCompare(b.bus.id, undefined, {numeric:true});
   });
 
   const card = el('div','card');
@@ -4435,41 +4800,49 @@ function renderPmDueTab(holder){
   }
 
   const table = document.createElement('table');
-  table.innerHTML = '<thead><tr><th>Equipment</th><th>PM item</th><th>Type</th><th>Location</th><th>Every</th><th>Last done</th><th>Current</th><th>Due at</th><th>Status</th><th></th></tr></thead>';
+  table.innerHTML = '<thead><tr><th>Equipment</th><th>PM item</th><th>Type</th><th>Location</th><th>Every</th><th>Last done</th><th>Current</th><th>Due</th><th>Status</th><th></th></tr></thead>';
   const tbody = document.createElement('tbody');
   filtered.forEach(r=>{
+    const st = r.st;
+    const remUnit = st.dayBased ? (Math.abs(st.remaining)===1?'day':'days') : r.unit;
     let statusTag;
-    if(!r.hasReading){
-      statusTag = '<span class="tag" style="background:#eef1f5; color:var(--ink-soft);">No readings</span>';
-    } else if(r.isDue){
-      const over = r.current - r.dueAt;
-      statusTag = '<span class="tag open">Due' + (over>0 ? ' · ' + over.toLocaleString() + ' ' + r.unit + ' over' : '') + '</span>';
-    } else if(r.soon){
-      statusTag = '<span class="tag minor">Soon · ' + r.remaining.toLocaleString() + ' ' + r.unit + ' left</span>';
+    if(!st.hasBasis){
+      statusTag = '<span class="tag" style="background:#eef1f5; color:var(--ink-soft);">' + (st.dayBased ? 'No date set' : 'No readings') + '</span>';
+    } else if(st.isDue){
+      const over = -st.remaining;
+      statusTag = '<span class="tag open">Due' + (over>0 ? ' · ' + over.toLocaleString() + ' ' + remUnit + ' over' : '') + '</span>';
+    } else if(st.soon){
+      statusTag = '<span class="tag minor">Soon · ' + st.remaining.toLocaleString() + ' ' + remUnit + ' left</span>';
     } else {
       statusTag = '<span class="tag resolved">OK</span>';
     }
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td><strong>${escapeHtml(r.bus.id)}</strong><div style="font-size:11.5px; color:var(--ink-soft);">${escapeHtml(r.bus.name||'')}</div></td>
+    tr.innerHTML = `<td>${unitLinkHtml(r.bus.id)}<div style="font-size:11.5px; color:var(--ink-soft);">${escapeHtml(r.bus.name||'')}</div></td>
       <td>${escapeHtml(r.item.label||'—')}</td>
       <td>${escapeHtml(r.cat.label)}</td>
       <td>${escapeHtml(locationForBus(r.bus))}</td>
-      <td class="mono">${r.interval ? r.interval.toLocaleString() + ' ' + r.unit : '—'}</td>
-      <td class="mono">${r.lastDone.toLocaleString()} ${r.unit}</td>
-      <td class="mono">${r.hasReading ? r.current.toLocaleString() + ' ' + r.unit : '—'}</td>
-      <td class="mono">${r.dueAt.toLocaleString()} ${r.unit}</td>
+      <td class="mono">${st.interval ? st.interval.toLocaleString() + ' ' + (st.dayBased ? 'days' : r.unit) : '—'}</td>
+      <td class="mono">${st.lastDoneLabel}</td>
+      <td class="mono">${!st.dayBased && r.current!=null ? r.current.toLocaleString() + ' ' + r.unit : '—'}</td>
+      <td class="mono">${st.dueAtLabel}</td>
       <td>${statusTag}</td>`;
     const tdBtn = document.createElement('td');
     const btn = document.createElement('button');
     btn.className = 'btn btn-outline btn-sm';
     btn.textContent = 'Mark done';
     btn.onclick = async ()=>{
-      if(!r.hasReading){
-        alert('No readings yet for ' + r.bus.id + '. Log a shift for this unit first, or set the reading on the Preventive Maintenance tab.');
-        return;
+      if(st.dayBased){
+        r.item.lastDoneDate = new Date().toISOString().slice(0,10);
+        pushPmHistory(r.bus, r.item, null);
+      } else {
+        if(r.current == null){
+          alert('No readings yet for ' + r.bus.id + '. Log a shift for this unit first, or set the reading on the Preventive Maintenance tab.');
+          return;
+        }
+        r.item.lastDoneReading = r.current;
+        pushPmHistory(r.bus, r.item, r.current);
       }
       btn.disabled = true; btn.textContent = 'Saving...';
-      r.item.lastDoneReading = r.current;
       const ok = await saveBuses();
       if(!ok){
         btn.disabled = false; btn.textContent = 'Mark done';
@@ -4483,10 +4856,26 @@ function renderPmDueTab(holder){
     tbody.appendChild(tr);
   });
   table.appendChild(tbody);
+  bindUnitLinks(table);
   const scrollWrap = el('div','table-scroll');
   scrollWrap.appendChild(table);
   card.appendChild(scrollWrap);
   holder.appendChild(card);
+}
+
+function exportPmDueCsv(rows){
+  const out = [['Equipment','Name','PM Item','Type','Location','Interval','Interval Basis','Last Done','Current Reading','Due','Status']];
+  rows.forEach(r=>{
+    const st = r.st;
+    out.push([
+      r.bus.id, r.bus.name||'', r.item.label||'', r.cat.label, locationForBus(r.bus),
+      st.interval, st.dayBased ? 'days' : r.unit,
+      st.lastDoneLabel, (!st.dayBased && r.current!=null) ? r.current : '',
+      st.dueAtLabel,
+      !st.hasBasis ? (st.dayBased?'No date set':'No readings') : st.isDue ? 'Due' : st.soon ? 'Soon' : 'OK'
+    ]);
+  });
+  downloadCsv(out, 'fleet-pm-due.csv');
 }
 
 function renderIssuesTab(holder, all){
@@ -4518,26 +4907,42 @@ function renderIssuesTab(holder, all){
 
   const filter = state.admin.issueFilter || 'open';
   const issueSortVal = state.admin.issueSort || 'date';
-  const filtered = rows.filter(r => filter==='all' ? true : filter==='resolved' ? r.shift.issuesResolved : !r.shift.issuesResolved);
+  // Filtering and status are per ITEM now — one shift record can have some items fixed and
+  // others still open, and each row here stands on its own.
+  const filtered = rows.filter(r => filter==='all' ? true : filter==='resolved' ? r.item.isResolved : !r.item.isResolved);
   filtered.sort((a,b)=>{
     if(issueSortVal==='equipment') return a.shift.busId.localeCompare(b.shift.busId, undefined, {numeric:true}) || (new Date(b.shift.timestamp) - new Date(a.shift.timestamp));
     if(issueSortVal==='driver') return (a.shift.driver||'').localeCompare(b.shift.driver||'') || (new Date(b.shift.timestamp) - new Date(a.shift.timestamp));
     if(issueSortVal==='severity') return ((b.item.severity==='urgent'?1:0) - (a.item.severity==='urgent'?1:0)) || (new Date(b.shift.timestamp) - new Date(a.shift.timestamp));
-    if(issueSortVal==='status') return ((a.shift.issuesResolved?1:0) - (b.shift.issuesResolved?1:0)) || (new Date(b.shift.timestamp) - new Date(a.shift.timestamp));
+    if(issueSortVal==='status') return ((a.item.isResolved?1:0) - (b.item.isResolved?1:0)) || (new Date(b.shift.timestamp) - new Date(a.shift.timestamp));
     return new Date(b.shift.timestamp) - new Date(a.shift.timestamp); // date, newest first (default)
   });
+
+  const exportBtn = document.createElement('button');
+  exportBtn.className='btn btn-outline btn-sm'; exportBtn.textContent='Export CSV';
+  exportBtn.onclick = ()=> exportIssuesCsv(filtered);
+  toolbar.appendChild(exportBtn);
 
   const card = el('div','card');
   if(!filtered.length){
     card.appendChild(el('div','empty','No issues in this view.'));
   } else {
     const table = document.createElement('table');
-    table.innerHTML = '<thead><tr><th>Equipment</th><th>Reported</th><th>Driver</th><th>Reading</th><th>Source</th><th>Category</th><th>Severity</th><th>Note</th><th>Photo</th><th>Status</th><th></th></tr></thead>';
+    table.innerHTML = '<thead><tr><th>Equipment</th><th>Reported</th><th>Driver</th><th>Reading</th><th>Source</th><th>Category</th><th>Severity</th><th>Note</th><th>Photo</th><th>Status</th><th>Resolution</th><th></th></tr></thead>';
     const tbody = document.createElement('tbody');
     filtered.forEach(r=>{
       const tr = document.createElement('tr');
       const readingCell = r.shift.mileage!=null ? r.shift.mileage.toLocaleString()+' '+unitLabel(r.cat.trackingUnit) : '—';
-      tr.innerHTML = `<td><strong>${escapeHtml(r.shift.busId)}</strong></td>
+      const res = r.item.resolved;
+      let resolutionCell = '—';
+      if(r.item.isResolved){
+        if(res && !res.legacy){
+          resolutionCell = escapeHtml(res.by || '') + (res.note ? ' — ' + escapeHtml(res.note) : '') + (res.at ? '<div style="font-size:11px; color:var(--ink-soft);">' + fmtDT(res.at) + '</div>' : '');
+        } else {
+          resolutionCell = '<span style="color:var(--ink-soft);">Resolved (no details recorded)</span>';
+        }
+      }
+      tr.innerHTML = `<td>${unitLinkHtml(r.shift.busId)}</td>
         <td>${fmtDT(r.shift.timestamp)}</td>
         <td>${escapeHtml(r.shift.driver)}</td>
         <td class="mono">${readingCell}</td>
@@ -4546,46 +4951,120 @@ function renderIssuesTab(holder, all){
         <td>${r.item.severity==='urgent' ? '<span class="tag open">Urgent</span>' : '<span class="tag minor">Minor</span>'}</td>
         <td style="max-width:220px;">${escapeHtml(r.item.note||'—')}</td>
         <td>${r.item.photoUrl ? `<a href="${escapeHtml(r.item.photoUrl)}" target="_blank" rel="noopener"><img src="${escapeHtml(r.item.photoUrl)}" alt="Issue photo" style="width:44px;height:44px;object-fit:cover;border-radius:5px;border:1px solid var(--line);"></a>` : '—'}</td>
-        <td>${r.shift.issuesResolved ? '<span class="tag resolved">Resolved</span>' : '<span class="tag open">Open</span>'}</td>`;
+        <td>${r.item.isResolved ? '<span class="tag resolved">Resolved</span>' : '<span class="tag open">Open</span>'}</td>
+        <td style="max-width:200px; font-size:12.5px;">${resolutionCell}</td>`;
       const tdBtn = document.createElement('td');
-      const btn = document.createElement('button');
-      btn.className='btn btn-outline btn-sm';
-      btn.textContent = r.shift.issuesResolved ? 'Reopen' : 'Mark resolved';
-      btn.onclick = async ()=>{
-        const wasResolved = r.shift.issuesResolved;
-        btn.disabled = true; btn.textContent = wasResolved ? 'Reopening...' : 'Marking resolved...';
-        const arr = await loadShifts(r.shift.busId);
-        const target = arr.find(x=>x.id===r.shift.id);
-        if(target) target.issuesResolved = !wasResolved;
-        const ok = await saveShifts(r.shift.busId, arr);
-        if(!ok){
-          btn.disabled = false; btn.textContent = wasResolved ? 'Reopen' : 'Mark resolved';
-          alert('Could not save.' + (lastStorageError ? '\n\nDetails: ' + lastStorageError : ''));
-          return;
-        }
-        // Only email on open -> resolved, never on reopen.
-        if(!wasResolved && target){
-          const bus = state.buses.find(b=>b.id===target.busId) || {id: target.busId, name: target.busName};
-          const cat = categoryFor(bus);
-          const items = allFlaggedItems(target, cat).map(i => ({
-            label: i.label + (i.severity==='urgent' ? ' ⚠ URGENT' : ''),
-            note: i.note,
-            photoUrl: i.photoUrl || null
-          }));
-          if(items.length) await sendResolvedNotification(bus, target.driver, target.timestamp, items);
-        }
-        renderAdminTab(holder);
-      };
-      tdBtn.appendChild(btn);
+      buildResolveControl(tdBtn, r.shift, r.cat, r.item, ()=>renderAdminTab(holder));
       tr.appendChild(tdBtn);
       tbody.appendChild(tr);
     });
     table.appendChild(tbody);
+    bindUnitLinks(table);
     const scrollWrap = el('div','table-scroll');
     scrollWrap.appendChild(table);
     card.appendChild(scrollWrap);
   }
   holder.appendChild(card);
+}
+
+// The Mark resolved / Reopen control for one flagged item. Resolving expands a small inline
+// form (who fixed it + what was done) instead of firing blind — that record is the unit's
+// maintenance history. Shared by the Mechanical Issues tab and the unit detail screen.
+function buildResolveControl(container, shift, cat, item, onDone){
+  container.innerHTML = '';
+  const btn = document.createElement('button');
+  btn.className='btn btn-outline btn-sm';
+  if(item.isResolved){
+    btn.textContent = 'Reopen';
+    btn.onclick = async ()=>{
+      btn.disabled = true; btn.textContent = 'Reopening...';
+      const ok = await applyItemResolution(shift, cat, item.key, null);
+      if(!ok){ btn.disabled = false; btn.textContent = 'Reopen'; return; }
+      onDone();
+    };
+    container.appendChild(btn);
+    return;
+  }
+  btn.textContent = 'Mark resolved';
+  btn.onclick = ()=>{
+    container.innerHTML = '';
+    const form = el('div');
+    form.style.cssText = 'display:flex; flex-direction:column; gap:6px; min-width:180px;';
+    const byInput = document.createElement('input');
+    byInput.type='text'; byInput.placeholder='Resolved by';
+    try{ byInput.value = localStorage.getItem('scfleet_resolvedBy') || currentDepartmentName() || ''; }catch(e){ byInput.value = currentDepartmentName() || ''; }
+    form.appendChild(byInput);
+    const noteInput = document.createElement('input');
+    noteInput.type='text'; noteInput.placeholder='What was done (optional)';
+    form.appendChild(noteInput);
+    const btnRow = el('div');
+    btnRow.style.cssText = 'display:flex; gap:6px;';
+    const saveBtn = document.createElement('button');
+    saveBtn.className='btn btn-primary btn-sm'; saveBtn.textContent='Save';
+    saveBtn.onclick = async ()=>{
+      const by = byInput.value.trim();
+      if(!by){ alert('Enter who resolved it.'); return; }
+      try{ localStorage.setItem('scfleet_resolvedBy', by); }catch(e){}
+      saveBtn.disabled = true; saveBtn.textContent = 'Saving...';
+      const resolution = { at: new Date().toISOString(), by, note: noteInput.value.trim() };
+      const ok = await applyItemResolution(shift, cat, item.key, resolution);
+      if(!ok){ saveBtn.disabled = false; saveBtn.textContent = 'Save'; return; }
+      // Email only this item, with the resolution details attached.
+      const bus = state.buses.find(b=>b.id===shift.busId) || {id: shift.busId, name: shift.busName};
+      await sendResolvedNotification(bus, shift.driver, shift.timestamp,
+        [{ label: item.label + (item.severity==='urgent' ? ' ⚠ URGENT' : ''), note: item.note, photoUrl: item.photoUrl || null }],
+        by, resolution.note);
+      onDone();
+    };
+    btnRow.appendChild(saveBtn);
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className='btn btn-outline btn-sm'; cancelBtn.textContent='Cancel';
+    cancelBtn.onclick = ()=> buildResolveControl(container, shift, cat, item, onDone);
+    btnRow.appendChild(cancelBtn);
+    form.appendChild(btnRow);
+    container.appendChild(form);
+    byInput.focus();
+  };
+  container.appendChild(btn);
+}
+
+// Loads the record fresh, applies the per-item resolution stamp (or clears it on reopen),
+// keeps the record-level flag in sync, and saves. Returns true on success.
+async function applyItemResolution(shift, cat, itemKey, resolution){
+  const arr = await loadShifts(shift.busId);
+  const target = arr.find(x=>x.id===shift.id);
+  if(!target){ alert('Could not find that record anymore.'); return false; }
+  setItemResolution(target, cat, itemKey, resolution);
+  const ok = await saveShifts(shift.busId, arr);
+  if(!ok){ alert('Could not save.' + (lastStorageError ? '\n\nDetails: ' + lastStorageError : '')); return false; }
+  return true;
+}
+
+function exportIssuesCsv(rows){
+  const out = [['Equipment','Reported','Driver','Reading','Source','Category','Severity','Note','Status','Resolved By','Resolution Note','Resolved At','Photo URL']];
+  rows.forEach(r=>{
+    const res = r.item.resolved;
+    out.push([
+      r.shift.busId, r.shift.timestamp, r.shift.driver,
+      (r.shift.mileage!=null ? r.shift.mileage : ''),
+      r.item.source==='check' ? 'Checklist' : 'Reported',
+      r.item.label, r.item.severity,
+      (r.item.note||'').replace(/[\r\n]+/g,' '),
+      r.item.isResolved ? 'Resolved' : 'Open',
+      res ? (res.by||'') : '', res ? (res.note||'').replace(/[\r\n]+/g,' ') : '', res ? (res.at||'') : '',
+      r.item.photoUrl || ''
+    ]);
+  });
+  downloadCsv(out, 'fleet-mechanical-issues.csv');
+}
+// Shared CSV download used by every per-tab export.
+function downloadCsv(rows, filename){
+  const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const blob = new Blob([csv], {type:'text/csv'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
 }
 
 function renderLogTab(holder, all){
@@ -4608,6 +5087,14 @@ function renderLogTab(holder, all){
   toolbar.appendChild(document.createTextNode('Location: '));
   toolbar.appendChild(locSel);
 
+  const rangeSel = document.createElement('select');
+  rangeSel.innerHTML = '<option value="all">All time</option><option value="7">Last 7 days</option>' +
+    '<option value="30">Last 30 days</option><option value="90">Last 90 days</option>';
+  rangeSel.value = state.admin.logRange || 'all';
+  rangeSel.onchange = ()=>{ state.admin.logRange = rangeSel.value; renderAdminTab(holder); };
+  toolbar.appendChild(document.createTextNode('Range: '));
+  toolbar.appendChild(rangeSel);
+
   const sortSel = document.createElement('select');
   sortSel.innerHTML = '<option value="date">Sort: Date (newest first)</option>' +
     '<option value="vehicle">Sort: Vehicle ID</option>' +
@@ -4618,6 +5105,22 @@ function renderLogTab(holder, all){
   toolbar.appendChild(document.createTextNode('Sort by: '));
   toolbar.appendChild(sortSel);
 
+  // Free-text search across unit ID, driver, and notes — same live-rerender-with-focus-
+  // restore pattern as the Equipment Types search box.
+  const searchInput = document.createElement('input');
+  searchInput.type='text'; searchInput.id='log-search-input'; searchInput.placeholder='Search unit, driver, notes...';
+  searchInput.value = state.admin.logSearch || '';
+  searchInput.style.minWidth='190px';
+  searchInput.oninput = ()=>{
+    state.admin.logSearch = searchInput.value;
+    const cursorPos = searchInput.selectionStart;
+    renderAdminTab(holder).then(()=>{
+      const revived = document.getElementById('log-search-input');
+      if(revived){ revived.focus(); revived.setSelectionRange(cursorPos, cursorPos); }
+    });
+  };
+  toolbar.appendChild(searchInput);
+
   const exportBtn = document.createElement('button');
   exportBtn.className='btn btn-outline btn-sm'; exportBtn.textContent='Export CSV';
   exportBtn.onclick = ()=> exportCsv(scopedAll);
@@ -4626,12 +5129,18 @@ function renderLogTab(holder, all){
   const busFilter = state.admin.logBus || 'all';
   const locFilter = state.admin.logLocation || 'all';
   const sortVal = state.admin.logSort || 'date';
+  const rangeVal = state.admin.logRange || 'all';
+  const searchVal = (state.admin.logSearch || '').trim().toLowerCase();
 
   if(busFilter !== 'all'){
     const clearBtn = document.createElement('button');
     clearBtn.className='btn btn-outline btn-sm'; clearBtn.textContent='Clear all logs for ' + busFilter;
     clearBtn.onclick = async ()=>{
-      if(!confirm('Delete ALL shift logs for ' + busFilter + '? This cannot be undone.')) return;
+      // Destructive enough to warrant type-to-confirm — one native confirm is too easy to
+      // click through when it wipes a unit's entire history.
+      const typed = prompt('This permanently deletes ALL shift logs for ' + busFilter + ' and cannot be undone.\n\nType the unit ID (' + busFilter + ') to confirm:');
+      if(typed === null) return;
+      if(typed.trim() !== busFilter){ alert('That didn\'t match — nothing was deleted.'); return; }
       const ok = await saveShifts(busFilter, []);
       if(!ok){ alert('Could not delete.' + (lastStorageError?'\n\nDetails: '+lastStorageError:'')); return; }
       renderAdminTab(holder);
@@ -4643,6 +5152,16 @@ function renderLogTab(holder, all){
   let filtered = busFilter==='all' ? scopedAll : scopedAll.filter(s=>s.busId===busFilter);
   if(locFilter !== 'all'){
     filtered = filtered.filter(s => locationForBus(state.buses.find(b=>b.id===s.busId) || {id:s.busId}) === locFilter);
+  }
+  if(rangeVal !== 'all'){
+    const cutoff = Date.now() - Number(rangeVal)*86400000;
+    filtered = filtered.filter(s => new Date(s.timestamp).getTime() >= cutoff);
+  }
+  if(searchVal){
+    filtered = filtered.filter(s =>
+      (s.busId||'').toLowerCase().includes(searchVal) ||
+      (s.driver||'').toLowerCase().includes(searchVal) ||
+      (s.notes||'').toLowerCase().includes(searchVal));
   }
 
   // Enrich each record with the derived fields the table (and every sort option) needs,
@@ -4685,7 +5204,7 @@ function renderLogTab(holder, all){
         : s.action==='end' ? '<span class="tag open" style="background:#f0e6d0;color:#8a6d1a;">End</span>'
         : '<span class="tag resolved" style="background:#e6e0f0;color:#5a3d99;">Check</span>';
       tr.innerHTML = `<td>${fmtDT(s.timestamp)}</td>
-        <td><strong>${escapeHtml(s.busId)}</strong></td>
+        <td>${unitLinkHtml(s.busId)}</td>
         <td>${escapeHtml(s.driver)}</td>
         <td>${actionTag}</td>
         <td class="mono">${s.mileage!=null ? s.mileage.toLocaleString()+' '+sUnit : '—'}</td>
@@ -4707,6 +5226,7 @@ function renderLogTab(holder, all){
       tbody.appendChild(tr);
     });
     table.appendChild(tbody);
+    bindUnitLinks(table);
     const scrollWrap = el('div','table-scroll');
     scrollWrap.appendChild(table);
     card.appendChild(scrollWrap);
@@ -4733,6 +5253,198 @@ function exportCsv(all){
   const a = document.createElement('a');
   a.href = url; a.download = 'fleet-shift-log.csv'; a.click();
   URL.revokeObjectURL(url);
+}
+
+/* ---------- unit detail screen ---------- */
+// Everything about one machine on one screen — reached by tapping a unit ID anywhere in
+// Admin. Info + status up top, then open issues (resolvable in place), PM schedule with
+// one-click mark-done, PM service history, and this unit's shift history.
+function renderUnitDetailTab(holder, all){
+  const busId = state.admin.detailBusId;
+  const bus = busesForCurrentUser().find(b=>b.id===busId);
+  const returnTab = state.admin.detailReturnTab || 'overview';
+  const returnLabel = ([['overview','Overview'], ...TOGGLEABLE_ADMIN_TABS].find(([k])=>k===returnTab) || [null,'Overview'])[1];
+
+  const backBar = el('div');
+  backBar.style.marginBottom = '10px';
+  const back = el('button','btn-link','← Back to ' + returnLabel);
+  back.onclick = ()=>{ state.admin.tab = returnTab; state.admin.detailBusId = null; render(); };
+  backBar.appendChild(back);
+  holder.appendChild(backBar);
+
+  if(!bus){
+    holder.appendChild(el('div','empty','That unit isn\'t visible to this account (or no longer exists).'));
+    return;
+  }
+
+  const cat = categoryFor(bus);
+  const hasMeter = cat.trackingUnit !== 'none';
+  const unit = unitLabel(cat.trackingUnit);
+  const shifts = (state.shiftsCache[bus.id] || []).slice().sort((a,b)=> new Date(b.timestamp)-new Date(a.timestamp));
+  const last = shifts[0] || null;
+  const current = hasMeter ? lastMileage(bus.id) : null;
+  const hasUrgent = shifts.some(s => recordHasUrgent(s, cat));
+
+  // --- Info card ---
+  const info = el('div','card');
+  const infoHead = el('div','flex-between');
+  infoHead.innerHTML = `<div><span style="font-family:'Barlow Condensed'; font-size:28px; font-weight:700; color:var(--navy);">${escapeHtml(bus.id)}</span>
+      <span style="color:var(--ink-soft); font-size:14px;"> ${escapeHtml(bus.name||'')}</span></div>
+    <div>${hasUrgent? '<span class="tag open">Out of service</span>' : '<span class="tag resolved">In service</span>'}</div>`;
+  info.appendChild(infoHead);
+  const infoBody = el('div','note');
+  infoBody.style.marginTop = '8px';
+  infoBody.innerHTML = 'Type: <strong>' + escapeHtml(cat.label) + '</strong> · Location: <strong>' + escapeHtml(locationForBus(bus)) + '</strong>' +
+    (hasMeter ? ' · Current reading: <strong>' + (current!=null ? current.toLocaleString() + ' ' + unit : 'no readings yet') + '</strong>' : '') +
+    ' · Last shift: <strong>' + (last ? escapeHtml(last.driver) + ' · ' + fmtDT(last.timestamp) : 'never') + '</strong>' +
+    ' · Logs: <strong>' + shifts.length + '</strong>';
+  info.appendChild(infoBody);
+  const infoBtns = el('div');
+  infoBtns.style.cssText = 'display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;';
+  const qrBtn = document.createElement('button');
+  qrBtn.className='btn btn-outline btn-sm'; qrBtn.textContent='Print QR label';
+  qrBtn.onclick = ()=> printQrLabels([bus], 'fitall');
+  infoBtns.appendChild(qrBtn);
+  info.appendChild(infoBtns);
+  holder.appendChild(info);
+
+  // --- Open issues ---
+  const openItems = [];
+  shifts.forEach(s => allFlaggedItems(s, cat).forEach(item => { if(!item.isResolved) openItems.push({shift:s, item}); }));
+  const issuesCard = el('div','card');
+  issuesCard.innerHTML = '<div class="section-label">Open issues (' + openItems.length + ')</div>';
+  if(!openItems.length){
+    issuesCard.appendChild(el('div','note','Nothing open on this unit.'));
+  } else {
+    openItems.forEach(({shift, item})=>{
+      const row = el('div');
+      row.style.cssText = 'display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:space-between; border:1.5px solid var(--line); border-radius:8px; padding:10px 12px; margin-top:8px;' +
+        (item.severity==='urgent' ? ' border-color:var(--bad); background:#fbe3e0;' : '');
+      const left = el('div');
+      left.innerHTML = (item.severity==='urgent' ? '<span class="tag open">Urgent</span> ' : '<span class="tag minor">Minor</span> ') +
+        '<strong>' + escapeHtml(item.label) + '</strong>' + (item.note ? ' — ' + escapeHtml(item.note) : '') +
+        '<div style="font-size:11.5px; color:var(--ink-soft); margin-top:3px;">Reported by ' + escapeHtml(shift.driver) + ' · ' + fmtDT(shift.timestamp) +
+        (item.photoUrl ? ' · <a href="' + escapeHtml(item.photoUrl) + '" target="_blank" rel="noopener">photo</a>' : '') + '</div>';
+      row.appendChild(left);
+      const ctl = el('div');
+      buildResolveControl(ctl, shift, cat, item, ()=>renderAdminTab(holder));
+      row.appendChild(ctl);
+      issuesCard.appendChild(row);
+    });
+  }
+  holder.appendChild(issuesCard);
+
+  // --- PM schedule ---
+  const pmCard = el('div','card');
+  pmCard.innerHTML = '<div class="section-label">PM schedule</div>';
+  const pmItems = bus.pmItems || [];
+  if(!pmItems.length){
+    pmCard.appendChild(el('div','note','No PM items on this unit — set them up on the Preventive Maintenance tab.'));
+  } else {
+    const t = document.createElement('table');
+    t.innerHTML = '<thead><tr><th>Item</th><th>Every</th><th>Last done</th><th>Due</th><th>Status</th><th></th></tr></thead>';
+    const tb = document.createElement('tbody');
+    pmItems.forEach(p=>{
+      const st = pmStatusFor(bus, p, current);
+      const remUnit = st.dayBased ? 'days' : unit;
+      let statusTag;
+      if(!st.hasBasis) statusTag = '<span class="tag" style="background:#eef1f5; color:var(--ink-soft);">' + (st.dayBased?'No date set':'No readings') + '</span>';
+      else if(st.isDue) statusTag = '<span class="tag open">Due' + (st.remaining<0 ? ' · ' + (-st.remaining).toLocaleString() + ' ' + remUnit + ' over' : '') + '</span>';
+      else if(st.soon) statusTag = '<span class="tag minor">Soon</span>';
+      else statusTag = '<span class="tag resolved">OK</span>';
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${escapeHtml(p.label||'—')}</td>
+        <td class="mono">${st.interval ? st.interval.toLocaleString() + ' ' + (st.dayBased?'days':unit) : '—'}</td>
+        <td class="mono">${st.lastDoneLabel}</td>
+        <td class="mono">${st.dueAtLabel}</td>
+        <td>${statusTag}</td>`;
+      const tdBtn = document.createElement('td');
+      const btn = document.createElement('button');
+      btn.className='btn btn-outline btn-sm'; btn.textContent='Mark done';
+      btn.onclick = async ()=>{
+        if(st.dayBased){
+          p.lastDoneDate = new Date().toISOString().slice(0,10);
+          pushPmHistory(bus, p, null);
+        } else {
+          if(current == null){ alert('No readings yet for ' + bus.id + '.'); return; }
+          p.lastDoneReading = current;
+          pushPmHistory(bus, p, current);
+        }
+        btn.disabled = true; btn.textContent = 'Saving...';
+        const ok = await saveBuses();
+        if(!ok){ btn.disabled=false; btn.textContent='Mark done'; alert('Could not save.' + (lastStorageError?'\n\nDetails: '+lastStorageError:'')); return; }
+        renderAdminTab(holder);
+      };
+      tdBtn.appendChild(btn);
+      tr.appendChild(tdBtn);
+      tb.appendChild(tr);
+    });
+    t.appendChild(tb);
+    const sw = el('div','table-scroll'); sw.appendChild(t);
+    pmCard.appendChild(sw);
+  }
+  holder.appendChild(pmCard);
+
+  // --- PM service history ---
+  const histCard = el('div','card');
+  const hist = (bus.pmHistory || []).slice().reverse();
+  histCard.innerHTML = '<div class="section-label">PM service history (' + hist.length + ')</div>';
+  if(!hist.length){
+    histCard.appendChild(el('div','note','No PM completions recorded yet — every "Mark done" from here on lands in this list.'));
+  } else {
+    const t = document.createElement('table');
+    t.innerHTML = '<thead><tr><th>Done</th><th>Item</th><th>At reading</th><th>By</th></tr></thead>';
+    const tb = document.createElement('tbody');
+    hist.forEach(h=>{
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${fmtDT(h.at)}</td><td>${escapeHtml(h.label||'—')}</td>
+        <td class="mono">${h.reading!=null ? h.reading.toLocaleString() + ' ' + unit : '—'}</td>
+        <td>${escapeHtml(h.by||'—')}</td>`;
+      tb.appendChild(tr);
+    });
+    t.appendChild(tb);
+    const sw = el('div','table-scroll'); sw.appendChild(t);
+    histCard.appendChild(sw);
+  }
+  holder.appendChild(histCard);
+
+  // --- Shift history (most recent 50) ---
+  const logCard = el('div','card');
+  logCard.innerHTML = '<div class="section-label">Shift history' + (shifts.length>50 ? ' (latest 50 of ' + shifts.length + ' — full list on the Shift Log tab)' : ' (' + shifts.length + ')') + '</div>';
+  if(!shifts.length){
+    logCard.appendChild(el('div','note','No shift logs yet for this unit.'));
+  } else {
+    const t = document.createElement('table');
+    t.innerHTML = '<thead><tr><th>When</th><th>Driver</th><th>Action</th><th>Reading</th><th>Issues</th><th>Notes</th></tr></thead>';
+    const tb = document.createElement('tbody');
+    shifts.slice(0,50).forEach(s=>{
+      const failCount = s.preTrip ? Object.values(s.preTrip).filter(c=>c.status==='fail').length : 0;
+      const issueCount = (s.issues && s.issues.length) || 0;
+      const urgent = recordHasUrgent(s, cat);
+      let issueCell = '—';
+      if(s.action==='start' || s.action==='daily'){
+        const parts = [];
+        if(s.preTrip) parts.push(failCount ? failCount+' failed' : 'All passed');
+        if(issueCount) parts.push(issueCount+' issue'+(issueCount===1?'':'s'));
+        issueCell = (parts.length ? parts.join(' · ') : '—') + (urgent ? ' ⚠' : '');
+      } else if(s.action==='end' && issueCount){
+        issueCell = issueCount + (urgent ? ' ⚠' : '');
+      }
+      const actionTag = s.action==='start' ? '<span class="tag resolved">Start</span>'
+        : s.action==='end' ? '<span class="tag open" style="background:#f0e6d0;color:#8a6d1a;">End</span>'
+        : '<span class="tag resolved" style="background:#e6e0f0;color:#5a3d99;">Check</span>';
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${fmtDT(s.timestamp)}</td><td>${escapeHtml(s.driver)}</td><td>${actionTag}</td>
+        <td class="mono">${s.mileage!=null ? s.mileage.toLocaleString()+' '+unit : '—'}</td>
+        <td>${issueCell}</td>
+        <td style="max-width:220px;">${escapeHtml(s.notes||'—')}</td>`;
+      tb.appendChild(tr);
+    });
+    t.appendChild(tb);
+    const sw = el('div','table-scroll'); sw.appendChild(t);
+    logCard.appendChild(sw);
+  }
+  holder.appendChild(logCard);
 }
 
 /* ---------- small dom helpers ---------- */
@@ -4825,6 +5537,12 @@ async function boot(){
     }
   }
   render();
+
+  // Drain any shift logs parked on this device while offline — now, whenever connectivity
+  // returns, and once a minute as a backstop for flaky signal that never fires 'online'.
+  flushPendingShifts();
+  window.addEventListener('online', ()=>{ flushPendingShifts(); });
+  setInterval(()=>{ if(loadPendingShifts().length) flushPendingShifts(); }, 60000);
 }
 boot();
 
