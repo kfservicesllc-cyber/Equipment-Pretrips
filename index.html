@@ -64,6 +64,15 @@
 
   .wrap{max-width:1080px; margin:0 auto; padding:22px 16px 60px;}
   .wrap.narrow{max-width:520px;}
+  /* Admin screens (the plain .wrap, not .narrow) get real width to use on a desktop
+     monitor instead of sitting in a 1080px column with huge blank gutters either
+     side. Driver/login/confirm screens stay narrow — they're single-column forms
+     that don't benefit from extra width. The 60px bottom padding was dead space
+     below the content on desktop; trimmed there, left generous on mobile where
+     thumbs and browser chrome need the room. */
+  @media (min-width:900px){
+    .wrap:not(.narrow){max-width:1440px; padding-bottom:28px;}
+  }
 
   /* Cards */
   .card{background:var(--paper); border:1px solid var(--line); border-radius:var(--radius); box-shadow:var(--shadow); padding:20px;}
@@ -267,6 +276,15 @@
      own scrollbar, so paging through a long list doesn't require scrolling past the pinned
      bars first, and more than one item can be seen at a time even when the pinned stack is tall. */
   .scroll-list{overflow-y:auto; -webkit-overflow-scrolling:touch; padding-right:2px; margin:0 -2px;}
+  /* On a wide desktop the equipment list otherwise stays single-column and just
+     stretches each card full-width with dead space inside it. Above 900px, lay
+     multiple cards side by side instead so the reclaimed width shows more units
+     at once. Each .bus-card is still its own flex layout internally, just in a
+     narrower column; it drops back to one column below 900px automatically. */
+  @media (min-width:900px){
+    .scroll-list.grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(460px,1fr)); gap:12px; align-content:start;}
+    .scroll-list.grid .bus-card{margin-bottom:0;}
+  }
   .empty{color:var(--ink-soft); font-size:13.5px; text-align:center; padding:30px 10px;}
   .tabs2{display:flex; gap:4px; border-bottom:2px solid var(--line); margin-bottom:16px; overflow-x:auto; -webkit-overflow-scrolling:touch; scrollbar-width:thin; position:sticky; z-index:15; background:var(--cream); padding-top:8px;}
   .tabs2 button{white-space:nowrap; flex:none;}
@@ -4089,7 +4107,7 @@ function renderBusesTab(holder){
     holder.appendChild(note);
   }
 
-  const listScroll = el('div','scroll-list');
+  const listScroll = el('div','scroll-list grid');
   holder.appendChild(listScroll);
 
   visibleBuses.forEach(b=>{
