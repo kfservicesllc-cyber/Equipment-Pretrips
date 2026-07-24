@@ -234,8 +234,24 @@
   .drawer-field .btn{width:100%; margin:0;}
   .drawer-group + .drawer-group{margin-top:6px; padding-top:16px; border-top:1px solid var(--line);}
 
-  .sheet-scrim{position:fixed; inset:0; background:rgba(18,35,63,.42); z-index:42;
-    overflow-y:auto; padding:36px 14px; display:flex; align-items:flex-start; justify-content:center;}
+  .note-collapse{margin:2px 2px 12px;}
+  .note-collapse > summary{list-style:none; cursor:pointer; font-size:12px; font-weight:600;
+    letter-spacing:.05em; text-transform:uppercase; color:var(--ink-soft);
+    padding:4px 0; display:flex; align-items:center; gap:7px;}
+  .note-collapse > summary::-webkit-details-marker{display:none;}
+  .note-collapse > summary::before{content:'\2139'; display:inline-flex; align-items:center;
+    justify-content:center; width:16px; height:16px; border-radius:50%;
+    background:var(--navy); color:#fff; font-size:11px; font-weight:700;}
+  .note-collapse > summary::after{content:'Show'; color:var(--gold-light); font-weight:700;}
+  .note-collapse[open] > summary::after{content:'Hide';}
+
+  .tools-menu{position:fixed; z-index:43; background:var(--paper); border:1px solid var(--line);
+    border-radius:10px; box-shadow:0 10px 30px rgba(18,35,63,.22); padding:6px; min-width:230px;}
+  .tools-menu button{display:block; width:100%; text-align:left; background:none; border:none;
+    padding:11px 12px; font-size:13.5px; font-weight:600; color:var(--ink); border-radius:6px; cursor:pointer;}
+  .tools-menu button:hover{background:var(--cream);}
+
+  .sheet-scrim{position:fixed; inset:0; background:rgba(18,35,63,.42); z-index:42;    overflow-y:auto; padding:36px 14px; display:flex; align-items:flex-start; justify-content:center;}
   .sheet{background:var(--paper); border-radius:var(--radius); width:100%; max-width:700px;
     box-shadow:0 18px 48px rgba(18,35,63,.3); overflow:hidden;}
   .sheet-head{border-radius:var(--radius) var(--radius) 0 0;}
@@ -2198,9 +2214,30 @@ function positionPinned(){
 // Bars that manage their own show/hide (Carts Quick-add and Storage Area cards,
 // marked data-self-panel) are left exactly where they are.
 function closeAdminPanels(){
-  ['admin-scrim','admin-drawer','admin-sheet'].forEach(id=>{
+  ['admin-scrim','admin-drawer','admin-sheet','tools-menu'].forEach(id=>{
     const n = document.getElementById(id);
     if(n) n.remove();
+  });
+}
+
+// The long explanatory paragraphs at the top of some tabs (and the QR printing
+// note) cost more vertical space than the list they explain. Fold each into a
+// one-line summary the user can open when they want it.
+function collapseLongNotes(holder){
+  Array.from(holder.children).forEach(node=>{
+    if(!node.classList.contains('note')) return;
+    if(node.dataset.noteDone) return;
+    const text = (node.textContent || '').trim();
+    if(text.length < 160) return; // short hints stay visible
+    node.dataset.noteDone = '1';
+    const det = document.createElement('details');
+    det.className = 'note-collapse';
+    const sum = document.createElement('summary');
+    sum.textContent = node.dataset.noteTitle || 'Info & tips';
+    det.appendChild(sum);
+    holder.insertBefore(det, node);
+    det.appendChild(node);
+    node.style.margin = '8px 2px 2px';
   });
 }
 
@@ -2255,8 +2292,12 @@ function applyAdminChrome(holder){
 
   const toolbars = Array.from(holder.children).filter(c=>
     c.classList.contains('pin-top') && c.classList.contains('toolbar') && !c.dataset.selfPanel && !c.dataset.keepInline);
+  // Cards that become a control-bar button + sheet: the "Add ___" cards (pin-top) plus
+  // anything explicitly marked data-sheet (CSV upload, quick-add, storage-area QRs...).
   const addCards = Array.from(holder.children).filter(c=>
-    c.classList.contains('pin-top') && c.classList.contains('card') && !c.dataset.selfPanel);
+    c.classList.contains('card') && (c.classList.contains('pin-top') || c.dataset.sheet) && !c.dataset.selfPanel);
+
+  collapseLongNotes(holder);
 
   if(!toolbars.length && !addCards.length) return;
 
@@ -2264,18 +2305,35 @@ function applyAdminChrome(holder){
   const bar = el('div','control-bar pin-top');
 
   // --- Add buttons -> sheet ---------------------------------------------------
+  // The primary "Add ___" card gets its own solid button. Secondary tools (CSV
+  // upload, quick-add, storage-area QRs) go behind one "Tools" menu so the control
+  // bar stays a single row even on a phone.
+  const tools = [];
   addCards.forEach(card=>{
     const labelEl = card.querySelector('.section-label');
-    const title = (labelEl ? labelEl.textContent.trim() : 'Add');
+    const title = card.dataset.sheetTitle || (labelEl ? labelEl.textContent.trim() : 'Add');
     if(labelEl) labelEl.remove(); // the sheet header shows it instead
-    const btn = document.createElement('button');
-    btn.className = 'btn btn-primary btn-sm';
-    btn.textContent = (/^add\b/i.test(title) ? '+ ' : '') + title;
-    btn.disabled = readOnly;
-    btn.onclick = ()=> openAdminSheet(title, card);
-    bar.appendChild(btn);
     card.remove(); // parked off-DOM until its button is pressed
+
+    if(card.classList.contains('pin-top')){
+      const btn = document.createElement('button');
+      btn.className = 'btn btn-primary btn-sm';
+      btn.textContent = (/^add\b/i.test(title) ? '+ ' : '') + title;
+      btn.disabled = readOnly;
+      btn.onclick = ()=> openAdminSheet(title, card);
+      bar.appendChild(btn);
+    } else {
+      tools.push({ title: title, card: card });
+    }
   });
+  if(tools.length){
+    const toolsBtn = document.createElement('button');
+    toolsBtn.className = 'btn btn-outline btn-sm';
+    toolsBtn.textContent = 'Tools \u25BE';
+    toolsBtn.disabled = readOnly;
+    toolsBtn.onclick = (e)=>{ e.stopPropagation(); openToolsMenu(toolsBtn, tools); };
+    bar.appendChild(toolsBtn);
+  }
 
   // --- Filters button -> drawer ----------------------------------------------
   let filtersBtn = null, chipRow = null, drawerBody = null;
@@ -2369,8 +2427,35 @@ function applyAdminChrome(holder){
   else closeFilterDrawer();
 }
 
-// Opens a parked "Add ___" card in a centre sheet. The card node is the live one
-// built by the tab, so its inputs and Save handlers work untouched.
+// Small dropdown under the "Tools" button listing the secondary cards for this tab.
+// Keeps the control bar to one row instead of a button per tool.
+function closeToolsMenu(){
+  const m = document.getElementById('tools-menu');
+  if(m) m.remove();
+}
+function openToolsMenu(anchor, tools){
+  if(document.getElementById('tools-menu')){ closeToolsMenu(); return; }
+  const menu = el('div','tools-menu');
+  menu.id = 'tools-menu';
+  tools.forEach(t=>{
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = t.title;
+    b.onclick = ()=>{ closeToolsMenu(); openAdminSheet(t.title, t.card); };
+    menu.appendChild(b);
+  });
+  document.body.appendChild(menu);
+  const r = anchor.getBoundingClientRect();
+  const w = menu.offsetWidth;
+  menu.style.top = (r.bottom + 6) + 'px';
+  // Keep it on screen on a narrow phone.
+  menu.style.left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8)) + 'px';
+  setTimeout(()=>{
+    document.addEventListener('click', closeToolsMenu, { once:true });
+  }, 0);
+}
+
+// Opens a parked "Add ___" card in a centre sheet. The card node is the live one// built by the tab, so its inputs and Save handlers work untouched.
 function openAdminSheet(title, cardNode){
   const scrim = el('div','sheet-scrim'); scrim.id = 'admin-sheet';
   const sheet = el('div','sheet');
@@ -2401,6 +2486,7 @@ function openAdminSheet(title, cardNode){
 if(!window._adminPanelEscBound){
   document.addEventListener('keydown', (e)=>{
     if(e.key !== 'Escape') return;
+    if(document.getElementById('tools-menu')){ closeToolsMenu(); return; }
     const sheet = document.getElementById('admin-sheet');
     if(sheet){ sheet.remove(); return; }
     if(state.admin && state.admin.filtersOpen) closeFilterDrawer();
@@ -3639,6 +3725,9 @@ function renderBusesTab(holder){
 
   const quickAddCard = el('div', cartsOnly ? 'card pin-top' : 'card');
   if(cartsOnly){ quickAddCard.style.padding = '12px 14px'; quickAddCard.dataset.selfPanel = '1'; }
+  // Carts keeps its own Hide/Add-units toggle; everywhere else this becomes a
+  // "Quick-add units" button in the control bar that opens the card in a sheet.
+  else { quickAddCard.dataset.sheet = '1'; quickAddCard.dataset.sheetTitle = 'Quick-add units'; }
   const quickHead = el('div');
   quickHead.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px;';
   quickHead.innerHTML = '<div class="section-label" style="margin-bottom:0;">Quick-add numbered equipment</div>';
@@ -3739,6 +3828,7 @@ function renderBusesTab(holder){
   // cart-only departments, so it's hidden there.
   if(!cartsOnly){
     const uploadCard = el('div','card');
+    uploadCard.dataset.sheet = '1'; uploadCard.dataset.sheetTitle = 'Upload equipment CSV';
     uploadCard.innerHTML = '<div class="section-label">Or upload a CSV</div>';
     const uploadDesc = el('div','note');
     uploadDesc.style.marginBottom = '12px';
@@ -3802,6 +3892,7 @@ function renderBusesTab(holder){
 
   const areaCard = el('div', cartsOnly ? 'card pin-top' : 'card');
   if(cartsOnly){ areaCard.style.padding = '12px 14px'; areaCard.dataset.selfPanel = '1'; }
+  else { areaCard.dataset.sheet = '1'; areaCard.dataset.sheetTitle = 'Storage area QR codes'; }
   const areaHead = el('div');
   areaHead.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px;';
   areaHead.innerHTML = '<div class="section-label" style="margin-bottom:0;">Storage Area QR Codes</div>';
@@ -3867,7 +3958,7 @@ function renderBusesTab(holder){
   holder.appendChild(areaCard);
 
   if(!busesForCurrentUser().length){
-    holder.appendChild(el('div','empty','No equipment yet — add your first unit above.'));
+    holder.appendChild(el('div','empty','No equipment yet — use "+ Add equipment" at the top to add your first unit.'));
     return;
   }
 
@@ -3992,6 +4083,7 @@ function renderBusesTab(holder){
 
   if(!cartsOnly){
     const note = el('div','note');
+    note.dataset.noteTitle = 'How QR printing works';
     note.style.margin = '10px 2px 14px';
     note.textContent = 'Print each QR code and post it on the equipment. Scanning it opens this app straight into that unit\'s form. Check the box on any unit(s) below to print just those — otherwise "Print all" prints everything shown. Pick a label size above first so the sheet lines up with your label paper. Note: for QR codes to work from drivers\' phones, this page needs a permanent link — publish this artifact (Share) or host the file, then reload this tab so the QR codes point to that address.';
     holder.appendChild(note);
@@ -4261,6 +4353,7 @@ function renderCatImportPreview(container, holder){
 
 function renderEquipmentTypesTab(holder){
   const intro = el('div','note');
+  intro.dataset.noteTitle = 'How equipment types work';
   intro.style.margin = '2px 2px 14px';
   intro.textContent = 'Each equipment type has its own pre-trip checklist and its own tracking unit (miles or hours). Add a new type for anything not listed yet — turf mowers, sprayers, groomers, UTVs, trucks, whatever you run.';
   holder.appendChild(intro);
@@ -4349,6 +4442,7 @@ function renderEquipmentTypesTab(holder){
   holder.appendChild(addCatCard);
 
   const catUploadCard = el('div','card');
+  catUploadCard.dataset.sheet = '1'; catUploadCard.dataset.sheetTitle = 'Upload types CSV';
   catUploadCard.innerHTML = '<div class="section-label">Or upload a CSV</div>';
   const catUploadDesc = el('div','note');
   catUploadDesc.style.marginBottom = '12px';
@@ -4707,6 +4801,7 @@ function renderPmImportPreview(container, holder){
 
 function renderPmTab(holder){
   const intro = el('div','note');
+  intro.dataset.noteTitle = 'How PM schedules work';
   intro.style.margin = '2px 2px 14px';
   intro.textContent = 'Set a schedule per piece of equipment — meter-based ("Oil change every 250 hours") or calendar-based ("Annual inspection every 365 days"). Once the current reading or date crosses that line, a maintenance email goes out, and keeps going out on every new log until you mark it done here. Equipment without a meter can still carry calendar-based items.';
   holder.appendChild(intro);
@@ -4756,6 +4851,7 @@ function renderPmTab(holder){
   const anyTrackable = busesForCurrentUser().some(b => categoryFor(b).trackingUnit !== 'none');
   if(anyTrackable){
     const uploadCard = el('div','card');
+    uploadCard.dataset.sheet = '1'; uploadCard.dataset.sheetTitle = 'Upload PM schedule CSV';
     uploadCard.innerHTML = '<div class="section-label">Or upload a PM schedule CSV</div>';
     const uploadDesc = el('div','note');
     uploadDesc.style.marginBottom = '12px';
@@ -5011,6 +5107,7 @@ function renderPmDueTab(holder){
   });
 
   const intro = el('div','note');
+  intro.dataset.noteTitle = 'How PM due works';
   intro.style.margin = '2px 2px 14px';
   intro.textContent = 'Everything on a PM schedule across your equipment, in one list — sorted so what\'s due floats to the top. "Soon" means the unit is within 10% of its interval of coming due. Mark an item done here and it resets to the unit\'s current reading (or to today, for calendar-based items), just like on the Preventive Maintenance tab.';
   holder.appendChild(intro);
