@@ -191,20 +191,61 @@
   .pin-top{position:sticky; z-index:12;}
   .card.pin-top{background:var(--paper);}
   .toolbar.pin-top{background:var(--cream); padding:8px 2px 10px; margin-bottom:0;}
-  /* Collapsible pinned bars: initPinCollapse() (JS) wraps each .pin-top's content in a
-     .pin-body and prepends a slim .pin-head (title + chevron). Clicking the head toggles
-     .pin-collapsed, hiding the body so the bar shrinks to one line. State is remembered
-     per bar in localStorage so a bar stays collapsed across tabs/visits. */
-  .pin-top.pin-wrap{display:block;}
-  .pin-head{display:flex; align-items:center; justify-content:space-between; gap:10px; cursor:pointer; user-select:none; -webkit-user-select:none;}
-  .pin-head .section-label{margin-bottom:0;}
-  .pin-head-title{font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-soft); font-weight:600;}
-  .pin-chev{font-size:12px; color:var(--ink-soft); padding:2px 6px; transition:transform .15s ease; flex:none;}
-  .pin-collapsed .pin-chev{transform:rotate(-90deg);}
-  .pin-wrap .pin-body{margin-top:10px;}
-  .toolbar.pin-top .pin-body{display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:8px;}
-  .pin-collapsed .pin-body{display:none;}
-  .card.pin-top.pin-collapsed{padding-top:10px; padding-bottom:10px;}
+
+  /* ---- Admin chrome: control bar + filter drawer + add sheet -------------------
+     applyAdminChrome() (JS) runs after every tab render. It lifts each tab's
+     sort/filter toolbars out of the page into a right-hand drawer, and each
+     "Add ___" card into a centre sheet, replacing them with one slim sticky
+     control bar. That leaves the equipment list itself nearly the full screen. */
+  .control-bar{display:flex; gap:8px; flex-wrap:wrap; align-items:center;
+    background:var(--cream); padding:8px 2px 9px; border-bottom:1px solid var(--line);}
+  .control-bar .btn{width:auto; margin:0;}
+  .filter-count{display:inline-flex; align-items:center; justify-content:center;
+    min-width:18px; height:18px; padding:0 5px; margin-left:7px; border-radius:9px;
+    background:var(--navy); color:#fff; font-size:11px; font-weight:700;}
+  .chip-row{display:flex; gap:6px; flex-wrap:wrap; align-items:center;
+    background:var(--cream); padding:0 2px 9px;}
+  .chip{display:inline-flex; align-items:center; gap:6px; padding:4px 8px 4px 10px;
+    border-radius:14px; background:#eae5d6; border:1px solid var(--line);
+    font-size:12px; font-weight:600; color:var(--ink-soft);}
+  .chip button{background:none; border:none; padding:0 2px; margin:0; width:auto;
+    font-size:14px; line-height:1; color:var(--ink-soft); cursor:pointer;}
+  .chip button:hover{color:var(--bad);}
+
+  .scrim{position:fixed; inset:0; background:rgba(18,35,63,.42); z-index:40;}
+  .drawer{position:fixed; top:0; right:0; bottom:0; width:340px; max-width:88vw;
+    background:var(--paper); z-index:41; display:flex; flex-direction:column;
+    box-shadow:-6px 0 28px rgba(18,35,63,.24);}
+  .drawer-head, .sheet-head{display:flex; align-items:center; justify-content:space-between;
+    gap:12px; background:var(--navy); color:#fff; padding:13px 16px;
+    border-bottom:3px solid var(--gold); flex:none;}
+  .drawer-head .t, .sheet-head .t{font-family:'Barlow Condensed',sans-serif; font-size:18px;
+    font-weight:700; letter-spacing:.05em; text-transform:uppercase;}
+  .panel-close{background:none; border:none; color:#fff; font-size:13px; font-weight:700;
+    letter-spacing:.06em; text-transform:uppercase; padding:4px 2px; width:auto; margin:0; cursor:pointer;}
+  .drawer-body{flex:1; overflow-y:auto; padding:16px 18px 26px;}
+  .drawer-foot{flex:none; padding:12px 16px; border-top:1px solid var(--line); background:var(--cream);}
+  .drawer-foot .btn{width:100%; margin:0;}
+  /* Toolbars are rebuilt as stacked labelled fields once inside the drawer. */
+  .drawer-field{margin-bottom:14px;}
+  .drawer-field > label{display:block; font-size:11px; letter-spacing:.12em;
+    text-transform:uppercase; color:var(--ink-soft); font-weight:600; margin-bottom:5px;}
+  .drawer-field select, .drawer-field input{width:100%; max-width:none;}
+  .drawer-field .btn{width:100%; margin:0;}
+  .drawer-group + .drawer-group{margin-top:6px; padding-top:16px; border-top:1px solid var(--line);}
+
+  .sheet-scrim{position:fixed; inset:0; background:rgba(18,35,63,.42); z-index:42;
+    overflow-y:auto; padding:36px 14px; display:flex; align-items:flex-start; justify-content:center;}
+  .sheet{background:var(--paper); border-radius:var(--radius); width:100%; max-width:700px;
+    box-shadow:0 18px 48px rgba(18,35,63,.3); overflow:hidden;}
+  .sheet-head{border-radius:var(--radius) var(--radius) 0 0;}
+  .sheet-body{padding:16px 18px 20px;}
+  .sheet-body > .card{box-shadow:none; border:none; background:transparent; padding:0; margin:0;}
+  @media (max-width:560px){
+    .sheet-scrim{padding:0;}
+    .sheet{border-radius:0; min-height:100%;}
+    .sheet-head{border-radius:0;}
+  }
   /* A list sitting below the pinned add/sort bars in a tab. sizeScrollLists() (JS) gives it
      its own height (filling whatever viewport space is left under the pinned stack) and its
      own scrollbar, so paging through a long list doesn't require scrolling past the pinned
@@ -1088,6 +1129,9 @@ function lastMileage(busId){
 /* ---------- render root ---------- */
 function render(){
   app.innerHTML = '';
+  // Drawer/sheet live on <body>, not inside app, so drop them on every full render —
+  // otherwise logging out or switching to driver mode could leave one floating.
+  if(typeof closeAdminPanels === 'function') closeAdminPanels();
   const toggle = document.getElementById('modeToggle');
   if(!state.qrLocked && !state.siteUnlocked){
     if(toggle) toggle.style.display = 'none';
@@ -2024,7 +2068,7 @@ function renderAdmin(){
       b.appendChild(badge);
     }
     if(state.admin.tab===key) b.className='active';
-    b.onclick = ()=>{ state.admin.tab=key; render(); };
+    b.onclick = ()=>{ state.admin.tab=key; state.admin.filtersOpen=false; render(); };
     tabs.appendChild(b);
   });
   wrap.appendChild(tabs);
@@ -2077,9 +2121,10 @@ async function renderAdminTab(holder){
   // control that could add, save, delete, or upload something gets disabled right after —
   // simpler and safer than threading a read-only branch through each tab's render function.
   if(state.admin.tab !== 'account') lockDownForViewOnly(holder);
-  // Make every pinned bar collapsible before measuring — collapsed bars change the
-  // heights positionPinned() works from.
-  initPinCollapse(holder);
+  // Lift this tab's filter toolbars into the side drawer and its Add cards into a
+  // sheet, leaving one slim control bar. Runs before positionPinned() because it
+  // changes what's left in the pinned stack.
+  applyAdminChrome(holder);
   // Keep "Add" and "Sort/Filter" bars pinned to the top of the screen regardless of which
   // tab just rendered or how long its list is. Runs after layout settles (fonts/images can
   // still shift heights right after paint), and again shortly after in case they do.
@@ -2139,66 +2184,228 @@ function positionPinned(){
   });
 }
 
-// ---- Collapsible pinned bars ------------------------------------------------
-// Every .pin-top bar (Add cards, sort/filter toolbars) gets a slim clickable header
-// with a chevron; clicking it collapses the bar to that one line so the list below
-// gets the screen space back. Collapsed/expanded choice is remembered per bar
-// (keyed by tab + bar title) in localStorage. Bars start COLLAPSED by default the
-// first time they're seen — expand once and that bar stays expanded from then on.
-function pinCollapsePrefs(){
-  try{ return JSON.parse(localStorage.getItem('pinCollapsePrefs') || '{}'); }
-  catch(e){ return {}; }
-}
-function setPinCollapsePref(key, val){
-  const p = pinCollapsePrefs();
-  p[key] = val;
-  try{ localStorage.setItem('pinCollapsePrefs', JSON.stringify(p)); }catch(e){}
-}
-function initPinCollapse(holder){
-  const prefs = pinCollapsePrefs();
-  holder.querySelectorAll('.pin-top').forEach(bar => {
-    // Skip bars that already run their own collapse behavior (Carts Quick-add /
-    // Storage Area cards) and anything already processed this render.
-    if(bar.dataset.pinSelfCollapse || bar.dataset.pinCollapseInit) return;
-    bar.dataset.pinCollapseInit = '1';
-
-    const labelEl = bar.querySelector('.section-label');
-    const title = bar.dataset.pinTitle || (labelEl ? labelEl.textContent.trim()
-      : (bar.classList.contains('toolbar') ? 'Sort & filters' : 'Tools'));
-    const key = (state.admin.tab || '') + '|' + title;
-
-    // Move the bar's existing content into a body wrapper (childNodes, not children,
-    // so toolbars' bare text nodes like "Show: " come along too).
-    const body = document.createElement('div');
-    body.className = 'pin-body';
-    while(bar.firstChild) body.appendChild(bar.firstChild);
-
-    // Slim header row: title (reusing the bar's own section-label when it has one,
-    // so it isn't shown twice) + chevron. Deliberately not a <button> — view-only
-    // lockdown disables buttons, but collapsing is a harmless view preference.
-    const head = document.createElement('div');
-    head.className = 'pin-head';
-    if(labelEl){ head.appendChild(labelEl); }
-    else { head.appendChild(el('div','pin-head-title', title)); }
-    const chev = el('span','pin-chev','\u25BE');
-    head.appendChild(chev);
-
-    bar.classList.add('pin-wrap');
-    bar.appendChild(head);
-    bar.appendChild(body);
-
-    const applyCollapsed = (collapsed)=>{
-      bar.classList.toggle('pin-collapsed', collapsed);
-    };
-    let collapsed = (key in prefs) ? !!prefs[key] : true;
-    applyCollapsed(collapsed);
-    head.onclick = ()=>{
-      collapsed = !collapsed;
-      applyCollapsed(collapsed);
-      setPinCollapsePref(key, collapsed);
-      positionPinned();
-    };
+// ---- Admin chrome: filter drawer + add sheet --------------------------------
+// Runs after every admin tab render. Rather than each tab building its own
+// drawer, this takes what the tab already rendered and relocates it:
+//   * every .toolbar.pin-top (sort/filter/print bars) -> right-hand drawer,
+//     rebuilt as stacked labelled fields, opened by one "Filters" button
+//   * every .card.pin-top ("Add equipment", "Add department", ...) -> a centre
+//     sheet, opened by its own button in the control bar
+// What's left above the list is a single slim control bar, so the list gets
+// nearly the whole screen. Moving the live DOM nodes (rather than rebuilding
+// them) keeps every existing onchange/onclick handler intact.
+//
+// Bars that manage their own show/hide (Carts Quick-add and Storage Area cards,
+// marked data-self-panel) are left exactly where they are.
+function closeAdminPanels(){
+  ['admin-scrim','admin-drawer','admin-sheet'].forEach(id=>{
+    const n = document.getElementById(id);
+    if(n) n.remove();
   });
+}
+
+function activeFilterChips(drawerBody){
+  // A select sitting on anything other than its first option is a live filter.
+  // Every filter select in this app puts its "All ___" / default option first.
+  // A search box with anything typed in it counts too.
+  const chips = [];
+  drawerBody.querySelectorAll('select').forEach(sel=>{
+    if(sel.dataset.noChip) return;
+    if(sel.selectedIndex > 0 && sel.options[sel.selectedIndex]){
+      chips.push({
+        label: sel.options[sel.selectedIndex].text,
+        clear: ()=>{ sel.selectedIndex = 0; sel.dispatchEvent(new Event('change')); }
+      });
+    }
+  });
+  drawerBody.querySelectorAll('input[type="text"], input[type="search"], input:not([type])').forEach(inp=>{
+    if(inp.dataset.noChip) return;
+    if(String(inp.value || '').trim()){
+      chips.push({
+        label: '\u201C' + inp.value.trim() + '\u201D',
+        clear: ()=>{
+          inp.value = '';
+          inp.dispatchEvent(new Event('input'));
+          inp.dispatchEvent(new Event('change'));
+        }
+      });
+    }
+  });
+  return chips;
+}
+
+function openFilterDrawer(){
+  const drawer = document.getElementById('admin-drawer');
+  const scrim = document.getElementById('admin-scrim');
+  if(!drawer || !scrim) return;
+  state.admin.filtersOpen = true;
+  drawer.style.display = 'flex';
+  scrim.style.display = 'block';
+}
+function closeFilterDrawer(){
+  const drawer = document.getElementById('admin-drawer');
+  const scrim = document.getElementById('admin-scrim');
+  state.admin.filtersOpen = false;
+  if(drawer) drawer.style.display = 'none';
+  if(scrim) scrim.style.display = 'none';
+}
+
+function applyAdminChrome(holder){
+  closeAdminPanels();
+
+  const toolbars = Array.from(holder.children).filter(c=>
+    c.classList.contains('pin-top') && c.classList.contains('toolbar') && !c.dataset.selfPanel && !c.dataset.keepInline);
+  const addCards = Array.from(holder.children).filter(c=>
+    c.classList.contains('pin-top') && c.classList.contains('card') && !c.dataset.selfPanel);
+
+  if(!toolbars.length && !addCards.length) return;
+
+  const readOnly = (typeof isViewOnly === 'function') && isViewOnly();
+  const bar = el('div','control-bar pin-top');
+
+  // --- Add buttons -> sheet ---------------------------------------------------
+  addCards.forEach(card=>{
+    const labelEl = card.querySelector('.section-label');
+    const title = (labelEl ? labelEl.textContent.trim() : 'Add');
+    if(labelEl) labelEl.remove(); // the sheet header shows it instead
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-primary btn-sm';
+    btn.textContent = (/^add\b/i.test(title) ? '+ ' : '') + title;
+    btn.disabled = readOnly;
+    btn.onclick = ()=> openAdminSheet(title, card);
+    bar.appendChild(btn);
+    card.remove(); // parked off-DOM until its button is pressed
+  });
+
+  // --- Filters button -> drawer ----------------------------------------------
+  let filtersBtn = null, chipRow = null, drawerBody = null;
+  if(toolbars.length){
+    const scrim = el('div','scrim'); scrim.id = 'admin-scrim';
+    const drawer = el('div','drawer'); drawer.id = 'admin-drawer';
+    const head = el('div','drawer-head');
+    head.appendChild(el('div','t','Filters & tools'));
+    const closeBtn = el('button','panel-close','Close'); closeBtn.type='button';
+    head.appendChild(closeBtn);
+    drawer.appendChild(head);
+
+    drawerBody = el('div','drawer-body');
+    toolbars.forEach(tb=>{
+      const group = el('div','drawer-group');
+      // Toolbars are a flat run of bare text labels ("Show: "), selects, inputs and
+      // buttons. Pair each control with the text node just before it and stack them.
+      let pendingLabel = '';
+      Array.from(tb.childNodes).forEach(node=>{
+        if(node.nodeType === 3){
+          const t = node.textContent.trim();
+          if(t) pendingLabel = t.replace(/:\s*$/,'');
+          return;
+        }
+        if(node.nodeType !== 1) return;
+        const field = el('div','drawer-field');
+        const tag = node.tagName;
+        if(tag === 'SELECT' || tag === 'INPUT'){
+          const labelText = pendingLabel || node.title || node.placeholder || '';
+          if(labelText) field.appendChild(el('label',null,labelText));
+        }
+        pendingLabel = '';
+        field.appendChild(node);
+        group.appendChild(field);
+      });
+      if(group.children.length) drawerBody.appendChild(group);
+      tb.remove();
+    });
+    drawer.appendChild(drawerBody);
+
+    const foot = el('div','drawer-foot');
+    const doneBtn = el('button','btn btn-primary','Done'); doneBtn.type='button';
+    foot.appendChild(doneBtn);
+    drawer.appendChild(foot);
+
+    document.body.appendChild(scrim);
+    document.body.appendChild(drawer);
+
+    closeBtn.onclick = closeFilterDrawer;
+    doneBtn.onclick = closeFilterDrawer;
+    scrim.onclick = closeFilterDrawer;
+
+    filtersBtn = document.createElement('button');
+    filtersBtn.className = 'btn btn-outline btn-sm';
+    filtersBtn.onclick = openFilterDrawer;
+    bar.appendChild(filtersBtn);
+
+    chipRow = el('div','chip-row pin-top');
+  }
+
+  holder.insertBefore(bar, holder.firstChild);
+  if(chipRow) holder.insertBefore(chipRow, bar.nextSibling);
+
+  // --- Active-filter chips ----------------------------------------------------
+  // Without these, a filtered list just looks short with no clue why or where to
+  // undo it — the whole reason the drawer needs a readout back on the page.
+  if(chipRow && drawerBody){
+    const chips = activeFilterChips(drawerBody);
+    filtersBtn.textContent = 'Filters';
+    if(chips.length){
+      const count = el('span','filter-count', String(chips.length));
+      filtersBtn.appendChild(count);
+    }
+    chipRow.innerHTML = '';
+    chips.forEach(c=>{
+      const chip = el('div','chip');
+      chip.appendChild(document.createTextNode(c.label));
+      const x = document.createElement('button');
+      x.type = 'button'; x.textContent = '\u00D7'; x.title = 'Clear this filter';
+      x.onclick = ()=>{ c.clear(); };
+      chip.appendChild(x);
+      chipRow.appendChild(chip);
+    });
+    chipRow.style.display = chips.length ? 'flex' : 'none';
+  }
+
+  // Filter changes re-render the whole tab, which rebuilds this drawer from
+  // scratch — so reopen it if it was open, otherwise every dropdown change would
+  // slam it shut mid-adjustment.
+  if(state.admin.filtersOpen && toolbars.length) openFilterDrawer();
+  else closeFilterDrawer();
+}
+
+// Opens a parked "Add ___" card in a centre sheet. The card node is the live one
+// built by the tab, so its inputs and Save handlers work untouched.
+function openAdminSheet(title, cardNode){
+  const scrim = el('div','sheet-scrim'); scrim.id = 'admin-sheet';
+  const sheet = el('div','sheet');
+  const head = el('div','sheet-head');
+  head.appendChild(el('div','t',title));
+  const closeBtn = el('button','panel-close','Close'); closeBtn.type='button';
+  head.appendChild(closeBtn);
+  const body = el('div','sheet-body');
+  body.appendChild(cardNode);
+  sheet.appendChild(head);
+  sheet.appendChild(body);
+  scrim.appendChild(sheet);
+  document.body.appendChild(scrim);
+
+  const close = ()=>{
+    // Hand the card back off-DOM so the button can reopen it with whatever was typed.
+    if(cardNode.parentNode) cardNode.parentNode.removeChild(cardNode);
+    scrim.remove();
+  };
+  closeBtn.onclick = close;
+  scrim.onclick = (e)=>{ if(e.target === scrim) close(); };
+
+  const firstInput = sheet.querySelector('input, select, textarea');
+  if(firstInput) firstInput.focus();
+}
+
+// Esc closes whichever panel is on top.
+if(!window._adminPanelEscBound){
+  document.addEventListener('keydown', (e)=>{
+    if(e.key !== 'Escape') return;
+    const sheet = document.getElementById('admin-sheet');
+    if(sheet){ sheet.remove(); return; }
+    if(state.admin && state.admin.filtersOpen) closeFilterDrawer();
+  });
+  window._adminPanelEscBound = true;
 }
 
 function renderSettingsTab(holder){
@@ -3431,7 +3638,7 @@ function renderBusesTab(holder){
   }
 
   const quickAddCard = el('div', cartsOnly ? 'card pin-top' : 'card');
-  if(cartsOnly){ quickAddCard.style.padding = '12px 14px'; quickAddCard.dataset.pinSelfCollapse = '1'; }
+  if(cartsOnly){ quickAddCard.style.padding = '12px 14px'; quickAddCard.dataset.selfPanel = '1'; }
   const quickHead = el('div');
   quickHead.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px;';
   quickHead.innerHTML = '<div class="section-label" style="margin-bottom:0;">Quick-add numbered equipment</div>';
@@ -3594,7 +3801,7 @@ function renderBusesTab(holder){
   }
 
   const areaCard = el('div', cartsOnly ? 'card pin-top' : 'card');
-  if(cartsOnly){ areaCard.style.padding = '12px 14px'; areaCard.dataset.pinSelfCollapse = '1'; }
+  if(cartsOnly){ areaCard.style.padding = '12px 14px'; areaCard.dataset.selfPanel = '1'; }
   const areaHead = el('div');
   areaHead.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px;';
   areaHead.innerHTML = '<div class="section-label" style="margin-bottom:0;">Storage Area QR Codes</div>';
@@ -3723,7 +3930,9 @@ function renderBusesTab(holder){
   const visibleIds = visibleBuses.map(b=>b.id);
   const selectedVisibleCount = visibleIds.filter(id=>selectedBusIds.has(id)).length;
   const bulkBar = el('div','toolbar pin-top');
-  bulkBar.dataset.pinTitle = 'Select & print';
+  // Stays on the page rather than moving into the Filters drawer: the select-all
+  // checkbox and "print selected" only make sense sitting directly above the list.
+  bulkBar.dataset.keepInline = '1';
   bulkBar.style.padding = '5px 2px 6px';
   const selectAllLabel = document.createElement('label');
   selectAllLabel.style.cssText = 'display:flex; align-items:center; gap:7px; font-size:13px; font-weight:600; color:var(--ink-soft); cursor:pointer;';
